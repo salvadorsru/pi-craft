@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- The two skills are now `commit` and `pr`, invoked with `/skill:commit` and
+  `/skill:pr`. The old `/skill:new-commit` and `/skill:new-pr` names no longer
+  exist, so any muscle memory or script pointing at them must be updated.
+
 ## 1.2.0
 
 - The package ships two skills, `new-commit` and `new-pr`, and the `pack` prompt

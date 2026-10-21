@@ -1,5 +1,5 @@
 ---
-name: new-pr
+name: pr
 description: Draft or open a pull request with a context-first body — why, what changed, how to test, what to watch — built from the real branch diff. Use when the user asks to create, draft, or improve a PR description, PR body, or pull request.
 ---
 

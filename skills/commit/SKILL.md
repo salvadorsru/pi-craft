@@ -1,5 +1,5 @@
 ---
-name: new-commit
+name: commit
 description: Split pending changes into semantic commits, one story per commit, with an imperative English subject and a body only when it explains why. Use when the user asks to commit, to write a commit message, or to review what is staged.
 ---
 

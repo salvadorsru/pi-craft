@@ -50,7 +50,7 @@ The package also ships three git workflows. They are not part of the mode
 runtime: pi keeps a skill out of context until the task matches it (or until you
 force it with `/skill:name`), and a prompt template is just another `/` command.
 
-**`new-commit`** — `/skill:new-commit`
+**`commit`** — `/skill:commit`
 
 Takes the pending changes and groups them by story, not by file or directory.
 Each group becomes one commit: `type(scope): subject`, English and imperative,
@@ -59,7 +59,7 @@ Each group becomes one commit: `type(scope): subject`, English and imperative,
 `git log --oneline -15` first to copy the repository's own style, and restages
 the index between commits so a message never covers someone else's files.
 
-**`new-pr`** — `/skill:new-pr`
+**`pr`** — `/skill:pr`
 
 Reads the branch (`git log origin/main..HEAD`, `git diff --stat`) and writes the
 pull request body: summary, why now, changes, how to test, screenshots,
@@ -68,7 +68,7 @@ it prints the body for you to paste.
 
 **`pack`** — `/pack`
 
-`git add -A`, then hands the result to `new-commit`, so a mixed working tree
+`git add -A`, then hands the result to `commit`, so a mixed working tree
 becomes several commits in one command. It takes extra instructions as an
 argument.
 
@@ -137,8 +137,8 @@ extensions/craft/index.ts   wires the modes and the legacy entries
 src/modes/                  mode state, tool ownership, guard, bash allowlist
 src/ask/                    ask mode: commands, badge, instructions
 src/plan/                   plan mode: parser, progress, cards, questions
-skills/                     new-commit and new-pr, one directory each
-prompts/                    pack, which stages everything and calls new-commit
+skills/                     commit and pr, one directory each
+prompts/                    pack, which stages everything and calls commit
 ```
 
 - One `ModeRegistry` per session; only it calls `setActiveTools()`, and leaving a
