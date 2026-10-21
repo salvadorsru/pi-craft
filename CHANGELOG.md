@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.2.0
+
+- The package ships two skills, `new-commit` and `new-pr`, and the `pack` prompt
+  template: semantic commits split by story, pull requests built from the branch
+  diff, and stage-everything-then-pack. They replace the personal copies, so
+  remove `~/.pi/agent/skills/create-commit`, `~/.pi/agent/skills/create-pr` and
+  `~/.pi/agent/prompts/pack.md` to avoid running two of each.
+- `package.test.ts` checks the `pi` manifest against the files on disk, so a
+  skill or prompt cannot be declared but left out of the tarball.
+
 ## 1.1.0
 
 - `/plan:skip`, `/plan:stop` and `/plan:retry`: mark the current step done and

@@ -1,6 +1,6 @@
 {
   "name": "pi-craft",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Ask, plan and execute modes for pi: read-only Q&A, structured plans, live progress, one mode at a time.",
   "type": "module",
   "license": "MIT",
@@ -26,6 +26,8 @@
   "files": [
     "extensions",
     "src",
+    "skills",
+    "prompts",
     "README.md",
     "LICENSE",
     "CHANGELOG.md"
@@ -37,6 +39,12 @@
   "pi": {
     "extensions": [
       "./extensions/craft"
+    ],
+    "skills": [
+      "./skills"
+    ],
+    "prompts": [
+      "./prompts"
     ]
   },
   "peerDependencies": {

@@ -44,6 +44,17 @@ migrated from their session entries.
 | `/plan:skip` · `/plan:stop` · `/plan:retry` | Skip the current step, stop the run, retry the open step |
 | `Ctrl+Alt+P` · `--plan` | Shortcut and startup flag |
 
+## Skills and prompts
+
+Installing the package installs these too: they are skills and a prompt template
+of their own, not part of the mode runtime.
+
+| Command | What it does |
+|---|---|
+| `/skill:new-commit` | Split the pending changes into semantic commits, one story each |
+| `/skill:new-pr` | Draft or open the pull request from the real branch diff |
+| `/pack` | Stage everything, then pack it with `new-commit` |
+
 ## Modes
 
 ### Ask
