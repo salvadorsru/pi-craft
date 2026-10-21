@@ -16,7 +16,8 @@
 **plan** and **execute** — and only one of them is ever active. It replaces the
 separate `pi-ask` and `pi-plan` packages: a single mode runtime owns the tool set,
 the read-only guard, the instructions and the persistence, so two modes can never
-fight over the active tools.
+fight over the active tools. It also ships the commit and pull-request workflows
+below, so installing it is all it takes.
 
 ## Install
 
@@ -114,6 +115,8 @@ extensions/craft/index.ts   wires the modes and the legacy entries
 src/modes/                  mode state, tool ownership, guard, bash allowlist
 src/ask/                    ask mode: commands, badge, instructions
 src/plan/                   plan mode: parser, progress, cards, questions
+skills/                     new-commit and new-pr, one directory each
+prompts/                    pack, which stages everything and calls new-commit
 ```
 
 - One `ModeRegistry` per session; only it calls `setActiveTools()`, and leaving a
@@ -126,10 +129,13 @@ src/plan/                   plan mode: parser, progress, cards, questions
 
 ```bash
 bun test
+bun run typecheck
 ```
 
 The suite covers the mode runtime, the bash allowlist, plan extraction, progress
-rendering, the question tool, and the full flow against a mocked pi.
+rendering, the question tool, the full flow against a mocked pi, and that every
+skill and prompt named in the `pi` manifest exists on disk. CI runs both commands
+on every push and pull request.
 
 ## License
 
