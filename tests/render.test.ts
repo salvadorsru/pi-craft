@@ -63,6 +63,22 @@ describe("widgetLines", () => {
     expect(lines[0]).not.toContain("%");
     expect(lines.join("\n")).not.toContain("[>]");
   });
+
+  test("keeps a fixed height on a long plan and follows the current step", () => {
+    const long: PlanStep[] = Array.from({ length: 20 }, (_, index) => ({
+      step: index + 1,
+      text: `Step ${index + 1}`,
+      completed: index < 9,
+    }));
+
+    const lines = widgetLines(long, theme, 80);
+    const text = lines.join("\n");
+
+    expect(lines.length).toBeLessThanOrEqual(8);
+    expect(text).toContain("[>]");
+    expect(text).toContain("… 7 above");
+    expect(text).toContain("… 8 below");
+  });
 });
 
 describe("cardLines", () => {

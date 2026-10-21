@@ -231,9 +231,10 @@ export function statusText(
 /**
  * Checklist for the widget above the editor.
  *
- * One line per step: the current step is highlighted, completed steps stay
- * readable but recede, and long text is cut to the available width instead of
- * wrapping (the widget must keep a predictable height).
+ * A window of at most `MAX_STEPS` steps around the current one, so the widget
+ * stays at `MAX_STEPS + 3` lines at most however long the plan is. The current
+ * step is highlighted, completed steps stay readable but recede, and long text
+ * is cut to the available width instead of wrapping.
  */
 export function widgetLines(
   steps: PlanStep[],
@@ -264,20 +265,41 @@ export function widgetLines(
     header.push({ text: ` · ${total} step${total === 1 ? "" : "s"}`, color: "muted" });
   }
 
+  // A window around the current step keeps the widget from growing to the
+  // height of the plan: five rows are always enough to read the progress.
+  const MAX_STEPS = 5;
+  const anchor = currentIndex === -1 ? 0 : currentIndex;
+  const start = Math.max(0, Math.min(anchor - 2, total - MAX_STEPS));
+  const visible = steps.slice(start, start + MAX_STEPS);
+  const above = start;
+  const below = total - start - visible.length;
+
   const lines = [truncateSegments(header, width, theme)];
 
-  steps.forEach((step, index) => {
+  if (above > 0) {
+    lines.push(
+      truncateSegments([{ text: `… ${above} above`, color: "dim" }], width, theme),
+    );
+  }
+
+  visible.forEach((step, index) => {
     lines.push(
       truncateSegments(
         stepSegments(step, {
           completed: step.completed,
-          current: index === currentIndex,
+          current: start + index === currentIndex,
         }),
         width,
         theme,
       ),
     );
   });
+
+  if (below > 0) {
+    lines.push(
+      truncateSegments([{ text: `… ${below} below`, color: "dim" }], width, theme),
+    );
+  }
 
   return lines;
 }

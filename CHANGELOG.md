@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- The checklist widget keeps a fixed height. It shows the five steps around
+  the current one with `… N above` / `… N below`, so a long plan no longer
+  pushes the editor off the screen and the step in progress stays visible.
 - Undo no longer turns plan mode back on. The mode is recorded in the session
   branch, so a rewind restored the last entry it had just left: the toggle
   worked, and the next undo silently undid it.
