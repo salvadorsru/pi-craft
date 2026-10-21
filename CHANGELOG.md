@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.1.0
+
+- `/plan:skip`, `/plan:stop` and `/plan:retry`: mark the current step done and
+  start the next one, leave the execution without losing the plan, or run the
+  open step again after an aborted or failed run.
+- `/plan on|off|status`, matching `/ask`. Without an argument it still toggles.
+- Leaving execution no longer clears the step list; only a finished plan does,
+  so `/plan:status` can still show it.
+- CI: `bun run typecheck` and `bun test` on every push and pull request.
+
 ## 1.0.0
 
 - First release of `pi-craft`, replacing the separate `pi-ask` and `pi-plan`

@@ -7,7 +7,7 @@ import {
   textWidth,
   widgetLines,
 } from "../src/plan/render.ts";
-import type { PlanStep } from "../src/types.ts";
+import type { PlanStep } from "../src/plan/types.ts";
 
 const theme = {
   fg: (_color: string, text: string) => text,

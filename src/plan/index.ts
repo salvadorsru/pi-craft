@@ -153,7 +153,6 @@ export function registerPlan(pi: ExtensionAPI, modes: ModeRegistry): void {
   modes.define({
     id: "execute",
     label: "Plan execution",
-    onLeave: () => resetExecution(),
   });
 
   // Sessions from 0.3 and earlier stored the mode inside the `pi-plan` entry.
@@ -327,22 +326,37 @@ starts when this run ends. If the step needs no tool calls, include
     );
 
     modes.leave(ctx);
+    // The card already carries the finished list: drop it so a later
+    // `/plan:status` does not report a plan that is over.
+    resetExecution();
+    persistState();
+    updateUI(ctx);
+  }
+
+  function setPlanMode(ctx: ExtensionContext, on: boolean): void {
+    if (on) {
+      if (modes.is("plan")) {
+        ctx.ui.notify("Plan mode is already on.", "info");
+        return;
+      }
+      modes.enter("plan", ctx);
+      ctx.ui.notify(`Plan mode enabled. Tools: ${PLAN_MODE_TOOLS.join(", ")}`);
+    } else {
+      if (!modes.is("plan")) {
+        ctx.ui.notify("Plan mode is off.", "info");
+        return;
+      }
+      modes.leave(ctx);
+      ctx.ui.notify("Plan mode disabled. Full access restored.");
+    }
     persistState();
     updateUI(ctx);
   }
 
   function togglePlanMode(ctx: ExtensionContext): void {
-    if (modes.is("plan")) {
-      // Turning off plan mode
-      modes.leave(ctx);
-      ctx.ui.notify("Plan mode disabled. Full access restored.");
-    } else {
-      // Turning on plan mode (from normal or execute)
-      modes.enter("plan", ctx);
-      ctx.ui.notify(`Plan mode enabled. Tools: ${PLAN_MODE_TOOLS.join(", ")}`);
-    }
-    persistState();
-    updateUI(ctx);
+    // Turning on plan mode (from normal or execute); off never resets a step
+    // list, that is what `resetExecution` is for.
+    setPlanMode(ctx, !modes.is("plan"));
   }
 
   // --- Transcript renderers ---
@@ -481,8 +495,22 @@ starts when this run ends. If the step needs no tool calls, include
   // --- Commands ---
 
   pi.registerCommand("plan", {
-    description: "Toggle plan mode (read-only exploration)",
-    handler: async (_args, ctx) => togglePlanMode(ctx),
+    description: "Toggle plan mode. Also /plan on|off|status",
+    handler: async (args, ctx) => {
+      const word = args.trim().toLowerCase();
+      if (word === "on") return setPlanMode(ctx, true);
+      if (word === "off") return setPlanMode(ctx, false);
+      if (word === "status") {
+        const mode = modes.current() ?? "normal";
+        const progress =
+          steps.length > 0
+            ? ` ${getCompletionStats(steps).completed}/${steps.length} steps done.`
+            : "";
+        ctx.ui.notify(`Plan mode is ${mode}.${progress}`, "info");
+        return;
+      }
+      togglePlanMode(ctx);
+    },
   });
 
   pi.registerCommand("plan:status", {
@@ -500,6 +528,63 @@ starts when this run ends. If the step needs no tool calls, include
         `Plan (${modes.current() ?? "normal"}) — ${completed}/${total}\n\n${list}`,
         "info",
       );
+    },
+  });
+
+  pi.registerCommand("plan:skip", {
+    description: "Mark the current step done and start the next one",
+    handler: async (_args, ctx) => {
+      if (!modes.is("execute")) {
+        ctx.ui.notify("No step is running.", "info");
+        return;
+      }
+      const step = currentStep();
+      if (!step) {
+        finishPlan(ctx);
+        return;
+      }
+      step.completed = true;
+      persistState();
+      updateUI(ctx);
+      const next = currentStep();
+      if (next) beginStep(ctx);
+      else finishPlan(ctx);
+    },
+  });
+
+  pi.registerCommand("plan:stop", {
+    description: "Leave the execution and keep the plan",
+    handler: async (_args, ctx) => {
+      const step = modes.is("execute") ? currentStep() : undefined;
+      if (!step) {
+        ctx.ui.notify("No step is running.", "info");
+        return;
+      }
+      modes.leave(ctx);
+      // Leaving keeps `steps` in memory, so persist them under `normal`:
+      // `/plan:status` still shows the plan and `/plan:retry` resumes it.
+      persistState();
+      ctx.ui.notify(
+        `Plan stopped at step ${step.step}; /plan:status to review.`,
+        "info",
+      );
+    },
+  });
+
+  pi.registerCommand("plan:retry", {
+    description: "Run the open step again",
+    handler: async (_args, ctx) => {
+      if (steps.length === 0) {
+        ctx.ui.notify("No plan to run. Use /plan to start one.", "info");
+        return;
+      }
+      if (!currentStep()) {
+        ctx.ui.notify("Every step is done.", "info");
+        return;
+      }
+      // A step left open by an aborted or failed run has no other way back.
+      if (!modes.is("execute")) modes.enter("execute", ctx);
+      beginStep(ctx);
     },
   });
 

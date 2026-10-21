@@ -712,4 +712,94 @@ describe("plan extension", () => {
       h.sent.filter((item) => item.message?.customType === "pi-plan-execute"),
     ).toHaveLength(1);
   });
+
+  test("/plan:skip completes the current step and sends the next one", async () => {
+    const h = makeHarness();
+    await h.emit("session_start", {}, h.ctx);
+    await h.commands.get("plan").handler("", h.ctx);
+    await h.emit(
+      "agent_end",
+      { messages: [{ role: "assistant", content: [{ type: "text", text: planText }] }] },
+      h.ctx,
+    );
+
+    await h.commands.get("plan:skip").handler("", h.ctx);
+
+    const runs = h.sent.filter(
+      (item) => item.message?.customType === "pi-plan-execute",
+    );
+    expect(runs).toHaveLength(2);
+    const last = runs[1].message;
+    expect(last.content).toContain("Work on step 2 only:");
+    expect(last.details.steps[0].completed).toBe(true);
+    expect(last.details.steps[1].completed).toBe(false);
+  });
+
+  test("/plan:stop leaves the execution and keeps the plan for /plan:status", async () => {
+    const h = makeHarness();
+    const notes: string[] = [];
+    h.ctx.ui.notify = (text: string) => notes.push(text);
+    await h.emit("session_start", {}, h.ctx);
+    await h.commands.get("plan").handler("", h.ctx);
+    await h.emit(
+      "agent_end",
+      { messages: [{ role: "assistant", content: [{ type: "text", text: planText }] }] },
+      h.ctx,
+    );
+    expect(h.statuses["pi-plan"]).toContain("0/2");
+
+    await h.commands.get("plan:stop").handler("", h.ctx);
+
+    // Execute is full access, so the mode is gone by its badge, not its tools.
+    expect(h.statuses["pi-plan"]).toBeUndefined();
+    expect(notes[notes.length - 1]).toContain("Plan stopped at step 1");
+
+    notes.length = 0;
+    await h.commands.get("plan:status").handler("", h.ctx);
+    expect(notes[0]).toContain("Fix the parser in src/planner.ts");
+  });
+
+  test("/plan:retry resumes the open step from normal", async () => {
+    const h = makeHarness();
+    await h.emit("session_start", {}, h.ctx);
+    await h.commands.get("plan").handler("", h.ctx);
+    await h.emit(
+      "agent_end",
+      { messages: [{ role: "assistant", content: [{ type: "text", text: planText }] }] },
+      h.ctx,
+    );
+    await h.commands.get("plan:stop").handler("", h.ctx);
+
+    const runs = () =>
+      h.sent.filter((item) => item.message?.customType === "pi-plan-execute");
+    const before = runs().length;
+
+    await h.commands.get("plan:retry").handler("", h.ctx);
+
+    expect(h.statuses["pi-plan"]).toContain("0/2");
+    expect(runs()).toHaveLength(before + 1);
+    expect(runs().at(-1).message.content).toContain("Work on step 1 only:");
+  });
+
+  test("/plan off and on set the mode instead of toggling blindly", async () => {
+    const h = makeHarness();
+    const notes: string[] = [];
+    h.ctx.ui.notify = (text: string) => notes.push(text);
+    await h.emit("session_start", {}, h.ctx);
+
+    await h.commands.get("plan").handler("off", h.ctx);
+    expect(notes[notes.length - 1]).toBe("Plan mode is off.");
+    expect(h.activeTools()).toContain("edit");
+
+    await h.commands.get("plan").handler("on", h.ctx);
+    expect(notes[notes.length - 1]).toContain("Plan mode enabled");
+    expect(h.activeTools()).not.toContain("edit");
+
+    await h.commands.get("plan").handler("on", h.ctx);
+    expect(notes[notes.length - 1]).toBe("Plan mode is already on.");
+    expect(h.activeTools()).not.toContain("edit");
+
+    await h.commands.get("plan").handler("off", h.ctx);
+    expect(h.activeTools()).toContain("edit");
+  });
 });

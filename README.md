@@ -39,7 +39,9 @@ migrated from their session entries.
 | `/ask on` · `/ask off` · `/ask status` | Control ask mode explicitly |
 | `Ctrl+Alt+A` · `--ask` | Shortcut and startup flag |
 | `/plan` | Toggle plan mode |
+| `/plan on` · `/plan off` · `/plan status` | Control plan mode explicitly |
 | `/plan:status` | Show the current plan and its progress |
+| `/plan:skip` · `/plan:stop` · `/plan:retry` | Skip the current step, stop the run, retry the open step |
 | `Ctrl+Alt+P` · `--plan` | Shortcut and startup flag |
 
 ## Modes
@@ -73,6 +75,11 @@ One step per agent run: the checklist advances between runs, so progress shows
 up during the work rather than at the end. A step that needs no tool call
 declares `[DONE:n]`. When the last step ends, the card repeats the whole list
 with the duration and, expanded, the files that changed.
+
+A step can get stuck — a command that keeps failing, or a run cut off by
+`aborted`/`error`, which leaves the step open. `/plan:skip` marks it done and
+starts the next one, `/plan:retry` runs it again, and `/plan:stop` leaves the
+execution without losing the list, so `/plan:status` can still show it.
 
 ## What the modes block
 
