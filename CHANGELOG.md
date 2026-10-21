@@ -1,11 +1,19 @@
 # Changelog
 
-## 0.1.0
+## 1.0.0
 
-- First release: `ModeRegistry`, `getModes()`, exclusive mode transitions,
-  single-owner active tool set, read-only `tool_call` guard, shared bash
-  policy, mode prompt injection and filtering, `pi-modes` persistence, legacy
-  entry migration, and the `pi-modes:change` event.
-- Consumers vendor `src/` under `vendor/pi-modes/` with `bun run vendor`; there
-  is no npm publish and no install step. The `globalThis` registry keeps the
-  copies in sync.
+- First release of `pi-craft`, replacing the separate `pi-ask` and `pi-plan`
+  packages with one extension that owns all three modes.
+- Ask, plan and execute are mutually exclusive modes of a single runtime:
+  entering one leaves the other, and only one of them owns the active tools.
+- One tool-set owner. Leaving a mode restores the set from before any mode was
+  active, instead of a per-mode snapshot that could contain another mode's
+  restricted tools.
+- One read-only policy (mutating tools, bash allowlist, third-party tool
+  annotations) shared by ask and plan.
+- The mode is persisted as a `pi-craft` session entry; sessions from `pi-ask`,
+  `pi-plan` and the intermediate `pi-modes` runtime are migrated.
+- The UI uses single-width ASCII instead of emoji: `ask`/`plan` badges, an
+  `#`/`-` progress bar, and `[x]`/`[>]`/`[ ]` step markers.
+- Plan mode keeps the structured `ask_question` tool, one run per step, live
+  progress, the final card, and branch-aware resume.

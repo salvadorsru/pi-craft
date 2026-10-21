@@ -1,20 +1,15 @@
 /**
- * The mode runtime.
+ * The mode runtime for pi-craft.
  *
- * Pi loads every extension in its own module root, so two packages cannot rely
- * on sharing a dependency instance (see Pi's package documentation). The
- * runtime therefore lives on a `Symbol.for` slot of `globalThis`: whichever
- * copy of this package loads first creates it, and every later copy — even a
- * physically duplicated one — talks to the same object.
- *
- * The runtime is the single owner of:
+ * One extension owns ask, plan and execute, so one registry owns everything
+ * that used to be split between packages:
  * - the current mode and its transitions,
  * - the active tool set (`pi.setActiveTools`),
  * - the read-only guard (`tool_call`),
  * - the mode prompt and its context filtering,
- * - persistence (`pi.appendEntry("pi-modes")`).
+ * - persistence (`pi.appendEntry("pi-craft")`).
  *
- * Extensions only declare modes and react to changes.
+ * The mode modules only declare specs and react to changes.
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -27,13 +22,10 @@ import type {
 } from "./types.js";
 
 /** Channel emitted on `pi.events` after every transition. */
-export const MODE_CHANGE_CHANNEL = "pi-modes:change";
+export const MODE_CHANGE_CHANNEL = "pi-craft:change";
 
 /** `customType` of the persisted mode entry. */
-export const MODE_ENTRY_TYPE = "pi-modes";
-
-/** `globalThis` slot shared by every copy of this package. */
-const GLOBAL_KEY = Symbol.for("@salvadorsru/pi-modes/registry/v1");
+export const MODE_ENTRY_TYPE = "pi-craft";
 
 interface ToolAnnotations {
 	readOnlyHint?: boolean;
@@ -90,18 +82,19 @@ export class ModeRegistry {
 	private readonly specs = new Map<ModeId, ModeSpec>();
 	private readonly listeners = new Set<ChangeListener>();
 	private readonly legacyResolvers = new Map<string, LegacyResolver>();
-	private api: ExtensionAPI | undefined;
+	private api: ExtensionAPI;
 	private currentMode: ModeId | undefined;
 	private baseline: string[] | undefined;
-	private installed = false;
+
+	constructor(api: ExtensionAPI) {
+		this.api = api;
+		this.installHandlers();
+	}
 
 	// --- Registration -------------------------------------------------------
 
-	/** Bind to a Pi API and install the runtime handlers exactly once. */
-	install(api: ExtensionAPI): this {
-		this.api = api;
-		if (this.installed) return this;
-		this.installed = true;
+	private installHandlers(): void {
+		const api = this.api;
 
 		api.on("session_start", ((_event: unknown, ctx: ExtensionContext) => {
 			this.restore(ctx);
@@ -118,14 +111,12 @@ export class ModeRegistry {
 		api.on("tool_call", ((event: ToolCallEventLike) => {
 			return this.guard(event);
 		}) as never);
-
-		return this;
 	}
 
 	/** Declare a mode. Must run during extension load, before `session_start`. */
 	define(spec: ModeSpec): this {
-		if (!isModeSpec(spec)) throw new Error("pi-modes: a mode needs a non-empty id");
-		if (this.specs.has(spec.id)) throw new Error(`pi-modes: mode "${spec.id}" is already defined`);
+		if (!isModeSpec(spec)) throw new Error("pi-craft: a mode needs a non-empty id");
+		if (this.specs.has(spec.id)) throw new Error(`pi-craft: mode "${spec.id}" is already defined`);
 		this.specs.set(spec.id, { ...spec });
 		return this;
 	}
@@ -176,7 +167,7 @@ export class ModeRegistry {
 	/** Enter a mode. Returns whether the state changed. */
 	enter(id: ModeId, ctx: ExtensionContext): boolean {
 		const spec = this.specs.get(id);
-		if (!spec) throw new Error(`pi-modes: unknown mode "${id}"`);
+		if (!spec) throw new Error(`pi-craft: unknown mode "${id}"`);
 		const from = this.currentMode;
 		if (from === id) return false;
 		this.captureBaseline();
@@ -293,7 +284,7 @@ export class ModeRegistry {
 			}
 		}
 
-		this.currentMode = next;
+		this.currentMode = next !== undefined && this.specs.has(next) ? next : undefined;
 		this.applyTools();
 		this.emit(next, undefined, ctx);
 
@@ -413,25 +404,7 @@ export class ModeRegistry {
 	}
 }
 
-/**
- * Get the process-wide runtime and bind it to `pi`.
- *
- * The first call installs the handlers; later calls only bind and let the
- * caller declare more modes.
- */
-export function getModes(pi?: ExtensionAPI): ModeRegistry {
-	const slot = globalThis as unknown as Record<symbol, ModeRegistry | undefined>;
-	let registry = slot[GLOBAL_KEY];
-	if (!registry) {
-		registry = new ModeRegistry();
-		slot[GLOBAL_KEY] = registry;
-	}
-	if (pi) registry.install(pi);
-	return registry;
-}
-
-/** Drop the process-wide runtime. Intended for tests. */
-export function resetModes(): void {
-	const slot = globalThis as unknown as Record<symbol, ModeRegistry | undefined>;
-	delete slot[GLOBAL_KEY];
+/** Create the mode runtime and register its handlers on `pi`. */
+export function createModes(pi: ExtensionAPI): ModeRegistry {
+	return new ModeRegistry(pi);
 }

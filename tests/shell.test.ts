@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { checkReadOnlyCommand, isReadOnlySegment } from "../src/shell.ts";
+import { checkReadOnlyCommand, isReadOnlySegment } from "../src/modes/shell.ts";
 
 const safe = (command: string) =>
 	expect(checkReadOnlyCommand(command, "Ask mode").safe, command).toBe(true);

@@ -1,14 +1,12 @@
 /**
- * @salvadorsru/pi-modes
+ * Mode state, tool ownership and read-only policy for pi-craft.
  *
- * Shared mode state, tool ownership and read-only policy for Pi extensions.
  * See README.md for the contract.
  */
 
 export {
 	ModeRegistry,
-	getModes,
-	resetModes,
+	createModes,
 	MODE_CHANGE_CHANNEL,
 	MODE_ENTRY_TYPE,
 } from "./registry.js";

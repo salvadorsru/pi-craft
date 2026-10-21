@@ -1,180 +1,123 @@
-# pi-modes
+# pi-craft
 
-One owner for editor modes in [pi](https://pi.dev).
+Three ways to work on a codebase, one mode at a time:
 
-Pi extensions are isolated: each one keeps its own flags and can call
-`pi.setActiveTools()` whenever it wants. When two extensions both implement a
-mode (say, a read-only "ask" mode and a read-only "plan" mode), switching to
-one leaves the other active, both `tool_call` guards keep firing, and the last
-extension to call `setActiveTools()` wins. The tool set also gets a snapshot
-that can contain the other mode's restricted tools.
+- **Ask** — read-only questions. The model reads the project to answer, but
+  cannot change it.
+- **Plan** — read-only exploration that turns the analysis into a numbered
+  plan.
+- **Execute** — runs the plan one step at a time with live progress.
 
-`pi-modes` gives those extensions one shared state machine and one owner for the
-tool set. Use it when your extension implements a mode that must coexist with
-other modes.
+`/ask` and `/plan` are mutually exclusive: entering one leaves the other. The
+tool set, the read-only guard, the instructions and persistence are owned by a
+single mode runtime, so two modes can never fight over the active tools.
 
-## No registry, no install step
+## Install
 
-This is a **source library, not a published package**. Consumers vendor a copy
-under `vendor/pi-modes/` and import it with a relative path, so
-`pi install git:...` and a plain checkout work with zero dependencies.
-
-Vendoring does not duplicate the state: `getModes()` stores the registry on a
-`Symbol.for` slot of `globalThis`, so two physically distinct copies still share
-one current mode, one tool set and one guard.
-
-## Use
-
-In the consumer package, copy `src/*.ts` to `vendor/pi-modes/` (see
-[Vendoring](#vendoring)) and import it relatively:
-
-```ts
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { getModes } from "../../vendor/pi-modes/index.js";
-
-export default function askExtension(pi: ExtensionAPI): void {
-  const modes = getModes(pi);
-
-  modes.define({
-    id: "ask",
-    label: "Ask mode",
-    readOnly: true,
-    tools: ["read", "grep", "find", "ls", "bash"],
-    flag: "ask",
-    marker: "[ASK MODE ACTIVE]",
-    contextType: "ask-mode-context",
-    prompt: "[ASK MODE ACTIVE]\nAnswer questions; do not edit.",
-  });
-
-  pi.registerCommand("ask", {
-    description: "Toggle ask mode",
-    handler: async (_args, ctx) => {
-      if (modes.is("ask")) modes.leave(ctx);
-      else modes.enter("ask", ctx);
-    },
-  });
-}
-```
-
-Entering `ask` from any other mode leaves that mode first. The extension that
-declares `plan` does not need to know that `ask` exists.
-
-## API
-
-### `getModes(pi?)`
-
-Returns the process-wide `ModeRegistry` and binds it to `pi`. The first call
-installs the runtime handlers (`session_start`, `before_agent_start`, `context`,
-`tool_call`); later calls only bind and let the caller declare more modes.
-
-The runtime is stored on a `Symbol.for` slot of `globalThis` because pi loads
-packages in separate module roots: a vendored copy is a different module, but
-not a different state.
-
-### `registry.define(spec)`
-
-Declares a mode. Call it during extension load, before `session_start`.
-
-| Field | Meaning |
-|---|---|
-| `id` | Unique id (`ask`, `plan`, `execute`, ...). |
-| `label` | Human name used in guard reasons. |
-| `tools` | Active tools while the mode is current. Omit for the baseline. |
-| `readOnly` | Block mutating tools and unsafe bash. |
-| `flag` | CLI flag that starts Pi in this mode. Register the flag yourself. |
-| `marker` | Text inside the injected instructions, e.g. `[ASK MODE ACTIVE]`. |
-| `contextType` | `customType` of the hidden instructions. Defaults to `pi-mode-<id>`. |
-| `prompt` | Instructions injected before each user run. |
-| `keepNewestContext` | Keep only the newest instruction message in context. |
-| `onEnter` / `onLeave` | Mode-specific setup and cleanup. |
-
-`onLeave(ctx, to)` knows the destination: a plan mode can preserve its steps
-when moving to `execute` and reset them when leaving to any other mode.
-
-### Transitions
-
-```ts
-modes.enter(id, ctx);   // returns true when the state changed
-modes.leave(ctx);       // back to normal, returns true when it changed
-modes.toggle(id, ctx);  // "entered" | "left" | "unchanged"
-```
-
-Only one mode is current at a time; `normal` is the absence of a mode.
-
-### Queries
-
-```ts
-modes.current();   // ModeId | undefined
-modes.is("plan");  // boolean
-modes.spec();      // current ModeSpec
-modes.readOnly();  // current mode blocks mutations
-modes.modeIds();
-```
-
-### `registry.onChange(listener)`
-
-Called after every transition, including a session restore:
-
-```ts
-const unsubscribe = modes.onChange((to, from, ctx) => {
-  ctx.ui.setStatus("my-mode", to === "ask" ? "🔒 ask" : undefined);
-});
-```
-
-The runtime also emits `pi-modes:change` on `pi.events` with
-`{ mode, previous }`.
-
-### `registry.registerLegacy(customType, resolve)`
-
-Maps an old session entry to the mode it represented, so a version bump does
-not lose the mode on resume:
-
-```ts
-modes.registerLegacy("ask-mode", (data) =>
-  (data as { enabled?: boolean })?.enabled ? "ask" : undefined,
-);
-```
-
-The last legacy entry wins. A shared `pi-modes` entry always takes precedence.
-
-## What the runtime owns
-
-- **The tool set.** `define({ tools })` describes the set per mode; everything
-  else uses the baseline captured before any mode was applied. Leaving a mode
-  restores that baseline, not a per-mode snapshot.
-- **The read-only guard.** `edit`, `write` and `powershell` are blocked while a
-  read-only mode is current, bash is checked command by command, and third-party
-  tools that declare `destructiveHint` or `openWorldHint` without
-  `readOnlyHint` are blocked too.
-- **The bash policy.** `checkReadOnlyCommand()` is exported for tests and for
-  extensions that need the same rules outside a `tool_call`.
-- **The mode prompt.** Injected before user runs, filtered out of the context
-  once the mode is off, and pruned to the newest copy when
-  `keepNewestContext` is set.
-- **Persistence.** Every transition appends `{ mode }` under the `pi-modes`
-  custom type and restores it from the active branch on `session_start`.
-
-## Guarantees
-
-- Two extensions that call `getModes()` share one registry, one current mode
-  and one tool-set owner, even with physically duplicated vendored copies.
-- Entering a mode calls `onLeave` on the previous mode before applying tools.
-- The baseline is captured before the first mode is applied, so leaving a mode
-  never restores another mode's restricted set.
-- A guard or event consumer that throws never breaks a transition.
-
-## Vendoring
-
-From this repository:
+From GitHub:
 
 ```bash
-bun run vendor          # write vendor/pi-modes in ../pi-ask and ../pi-plan
-bun run check-vendor    # fail if a copy is stale
+pi install git:github.com/salvadorsru/pi-craft
 ```
 
-The script (`scripts/vendor.ts`) generates the copies with a header. Edit
-`src/` here, never the vendored files, and re-run `vendor` before committing a
-consumer change.
+From a local checkout:
+
+```bash
+pi install ./pi-craft
+```
+
+No build step and no dependencies: pi loads the TypeScript extension directly.
+
+> Replaces `pi-ask` and `pi-plan`. Remove them before installing `pi-craft`;
+> the last mode is migrated from their session entries.
+
+## Usage
+
+| Input | What it does |
+|---|---|
+| `/ask` | Toggle ask mode |
+| `/ask on` / `/ask off` / `/ask status` | Control ask mode explicitly |
+| `/ask <question>` | Turn ask mode on and ask in one step |
+| `Ctrl+Alt+A` | Toggle ask mode |
+| `--ask` | Start in ask mode |
+| `/plan` | Toggle plan mode |
+| `/plan:status` | Show the current plan and progress |
+| `Ctrl+Alt+P` | Toggle plan mode |
+| `--plan` | Start in plan mode |
+
+### Ask mode
+
+Read the code before answering, cite `file:line`, and propose changes instead of
+applying them. The footer shows `ask` in the success color.
+
+### Plan mode
+
+Ask the agent to analyze the code and write a plan under a `Plan:` header.
+Then choose **Execute the plan**, **Stay in plan mode**, or **Refine the plan**.
+Execution runs one step per agent run: the checklist advances while the plan is
+running, and the final card repeats the completed list with a summary.
+
+While planning, the agent can ask structured questions with the `ask_question`
+tool: a selector with suggested answers and an **Other — write my own answer**
+entry. Asking does not tick the current step.
+
+## What the modes restrict
+
+- **Tools**: `edit`, `write` and `powershell` are removed while ask or plan is
+  active. Plan keeps `read`, `bash`, `grep`, `find`, `ls` and `ask_question`;
+  ask keeps the same set without `ask_question`.
+- **Bash**: only read-only commands. The check requires every pipe segment to be
+  a known read-only command (`cat`, `head`, `grep`, `rg`, `find`, `ls`, `tree`,
+  `jq`, `git status/log/diff/show`, `cargo tree/metadata`, …) and rejects
+  redirection, chaining, substitution, flags that write (`find -delete`,
+  `sort -o`, `git -c`, …), dangerous assignments, interpreters and package
+  managers.
+- **Third-party tools**: tools that declare `destructiveHint` or
+  `openWorldHint` without `readOnlyHint` are blocked too.
+
+The guard is a second line of defense: even if a tool is re-activated
+mid-session, a mutating call is rejected while a read-only mode is current.
+
+## Icons
+
+The UI uses single-width ASCII, not emoji, so the footer and the checklist keep
+their columns in any terminal and font:
+
+```
+ask                     plan 2/3
+Plan  ###---  1/3 · 33%
+[x] 1. Parse the config
+[>] 2. Add the new option
+[ ] 3. Update the docs
+```
+
+`[x]` done, `[>]` current, `[ ]` pending. The progress bar is `#`/`-`.
+
+## State and migration
+
+The current mode is persisted as a `pi-craft` session entry and restored from
+the active branch on resume. Older entries are migrated:
+
+- `pi-plan` (plan mode and execution)
+- `ask-mode` (`pi-ask`)
+- `pi-modes` (the short-lived shared runtime)
+
+## Architecture
+
+```
+extensions/craft/index.ts   wires the modes together
+src/modes/                  mode state, tool ownership, guard, shell policy
+src/ask/                    ask mode: commands, badge, instructions
+src/plan/                   plan mode: parser, progress, renderers, questions
+```
+
+- One `ModeRegistry` per extension session owns the current mode.
+- Only the registry calls `pi.setActiveTools()`; entering a mode applies its
+  set, leaving restores the baseline captured before any mode was applied.
+- The registry injects the mode instructions and filters them out once the mode
+  is off.
+- `onEnter`/`onLeave` let plan keep its steps when moving to execution and
+  reset them when leaving to another mode.
 
 ## Development
 
@@ -182,8 +125,26 @@ consumer change.
 bun test
 ```
 
-The package is plain TypeScript with no build step: pi loads the vendored copies
-through jiti, like any other pi package.
+The suite covers the mode runtime, the shell policy, plan extraction, progress
+rendering, clarifying questions, the full extension flow with a mocked pi, and
+the ask/plan handoff.
+
+## Español
+
+Tres modos, uno a la vez:
+
+- **Ask** (`/ask`, `Ctrl+Alt+A`, `--ask`): preguntas de solo lectura.
+- **Plan** (`/plan`, `Ctrl+Alt+P`, `--plan`): exploración de solo lectura y plan
+  numerado; `/plan:status` muestra el progreso.
+- **Execute**: lo elige el agente al confirmar el plan, y avanza un paso por
+  corrida.
+
+`/ask` y `/plan` son mutuamente excluyentes: entrar a uno apaga el otro. La
+iconografía es ASCII de ancho fijo para que no se desalinee en ningún terminal.
+
+```bash
+pi install git:github.com/salvadorsru/pi-craft
+```
 
 ## License
 

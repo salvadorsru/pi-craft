@@ -1,45 +1,44 @@
 {
-  "name": "@salvadorsru/pi-modes",
-  "version": "0.1.0",
-  "description": "One owner for Pi editor modes: shared mode state, tool sets and read-only policy for Pi extensions",
+  "name": "pi-craft",
+  "version": "1.0.0",
+  "description": "Ask, plan and execute modes for pi: read-only Q&A, structured plans, live progress, one mode at a time.",
   "type": "module",
   "license": "MIT",
   "author": "salvadorsru",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/salvadorsru/pi-modes.git"
+    "url": "git+https://github.com/salvadorsru/pi-craft.git"
   },
-  "homepage": "https://github.com/salvadorsru/pi-modes#readme",
+  "homepage": "https://github.com/salvadorsru/pi-craft#readme",
   "bugs": {
-    "url": "https://github.com/salvadorsru/pi-modes/issues"
+    "url": "https://github.com/salvadorsru/pi-craft/issues"
   },
   "keywords": [
+    "pi-package",
     "pi",
     "pi-extension",
-    "mode",
+    "ask",
+    "plan",
+    "planning",
     "read-only",
-    "tool-policy"
+    "agent"
   ],
   "files": [
+    "extensions",
     "src",
     "README.md",
     "LICENSE",
     "CHANGELOG.md"
   ],
-  "exports": {
-    ".": {
-      "types": "./src/index.ts",
-      "default": "./src/index.ts"
-    }
-  },
-  "types": "./src/index.ts",
   "scripts": {
-    "test": "bun test",
-    "vendor": "bun scripts/vendor.ts",
-    "check-vendor": "bun scripts/vendor.ts --check"
+    "test": "bun test"
+  },
+  "pi": {
+    "extensions": [
+      "./extensions/craft"
+    ]
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*"
-  },
-  "private": true
+  }
 }

@@ -1,13 +1,11 @@
-import { beforeEach, describe, expect, test } from "bun:test";
-import { getModes, resetModes } from "../src/registry.ts";
+import { describe, expect, test } from "bun:test";
+import { createModes } from "../src/modes/registry.ts";
 
 type Handler = (...args: any[]) => any;
 
 const theme = { fg: (_color: string, text: string) => text };
 
 function makeHarness(options: { branch?: any[]; flags?: Record<string, boolean> } = {}) {
-	resetModes();
-
 	const handlers = new Map<string, Handler[]>();
 	const entries: { customType: string; data: any }[] = [];
 	const busEvents: { channel: string; data: any }[] = [];
@@ -79,7 +77,7 @@ function makeHarness(options: { branch?: any[]; flags?: Record<string, boolean> 
 		}
 	};
 
-	const modes = getModes(pi);
+	const modes = createModes(pi);
 	modes.define({
 		id: "ask",
 		label: "Ask mode",
@@ -119,11 +117,8 @@ function makeHarness(options: { branch?: any[]; flags?: Record<string, boolean> 
 }
 
 describe("mode runtime", () => {
-	beforeEach(() => resetModes());
-
 	test("entering and leaving a mode owns the active tools", () => {
 		const h = makeHarness();
-		h.modes.install(h.pi);
 
 		expect(h.modes.enter("ask", h.ctx)).toBe(true);
 		expect(h.activeTools()).toEqual(["read", "grep", "find", "ls", "bash"]);
@@ -148,7 +143,6 @@ describe("mode runtime", () => {
 
 	test("does not restore a stale snapshot when another mode changed the tools", () => {
 		const h = makeHarness();
-		h.modes.install(h.pi);
 
 		// Ask is entered while plan already restricts the set: the baseline,
 		// not the plan-era set, must come back.
@@ -163,21 +157,19 @@ describe("mode runtime", () => {
 
 	test("persists the shared mode entry and emits the event bus channel", () => {
 		const h = makeHarness();
-		h.modes.install(h.pi);
 
 		h.modes.enter("ask", h.ctx);
-		expect(h.entries.at(-1)).toEqual({ customType: "pi-modes", data: { mode: "ask" } });
+		expect(h.entries.at(-1)).toEqual({ customType: "pi-craft", data: { mode: "ask" } });
 
 		h.modes.leave(h.ctx);
-		expect(h.entries.at(-1)).toEqual({ customType: "pi-modes", data: { mode: null } });
+		expect(h.entries.at(-1)).toEqual({ customType: "pi-craft", data: { mode: null } });
 		expect(h.busEvents.map((event) => event.data.mode)).toEqual(["ask", "normal"]);
 	});
 
 	test("restores the shared entry on session start", async () => {
 		const h = makeHarness({
-			branch: [{ type: "custom", customType: "pi-modes", data: { mode: "plan" } }],
+			branch: [{ type: "custom", customType: "pi-craft", data: { mode: "plan" } }],
 		});
-		h.modes.install(h.pi);
 		await h.emit("session_start", {}, h.ctx);
 
 		expect(h.modes.current()).toBe("plan");
@@ -191,25 +183,22 @@ describe("mode runtime", () => {
 				{ type: "custom", customType: "pi-plan", data: { mode: "execute" } },
 			],
 		});
-		legacy.modes.install(legacy.pi);
 		await legacy.emit("session_start", {}, legacy.ctx);
 		expect(legacy.modes.current()).toBe("execute");
 
 		const shared = makeHarness({
 			branch: [
 				{ type: "custom", customType: "ask-mode", data: { enabled: true } },
-				{ type: "custom", customType: "pi-modes", data: { mode: "plan" } },
+				{ type: "custom", customType: "pi-craft", data: { mode: "plan" } },
 				{ type: "custom", customType: "pi-plan", data: { mode: "execute" } },
 			],
 		});
-		shared.modes.install(shared.pi);
 		await shared.emit("session_start", {}, shared.ctx);
 		expect(shared.modes.current()).toBe("plan");
 	});
 
 	test("the flag starts a mode when no session state exists", async () => {
 		const h = makeHarness({ flags: { ask: true } });
-		h.modes.install(h.pi);
 		await h.emit("session_start", {}, h.ctx);
 		expect(h.modes.current()).toBe("ask");
 		expect(h.entries.at(-1)?.data).toEqual({ mode: "ask" });
@@ -230,8 +219,7 @@ describe("mode runtime", () => {
 			},
 		};
 
-		resetModes();
-		const modes = getModes(pi);
+		const modes = createModes(pi);
 		modes.define({
 			id: "ask",
 			label: "Ask mode",
@@ -304,8 +292,7 @@ describe("mode runtime", () => {
 			},
 		};
 
-		resetModes();
-		const modes = getModes(pi);
+		const modes = createModes(pi);
 		modes.define({
 			id: "plan",
 			readOnly: true,
