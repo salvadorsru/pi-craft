@@ -1,7 +1,21 @@
 # Changelog
 
-## Unreleased
+## 1.2.0
 
+- The two skills are now `commit` and `pr`, invoked with `/skill:commit` and
+  `/skill:pr`. The old `/skill:new-commit` and `/skill:new-pr` names no longer
+  exist, so any muscle memory or script pointing at them must be updated.
+- The package ships those two skills and the `pack` prompt template: semantic
+  commits split by story, pull requests built from the branch diff, and
+  stage-everything-then-pack. They replace the personal copies, so remove
+  `~/.pi/agent/skills/create-commit`, `~/.pi/agent/skills/create-pr` and
+  `~/.pi/agent/prompts/pack.md` to avoid running two of each.
+- `/plan:skip`, `/plan:stop` and `/plan:retry`: mark the current step done and
+  start the next one, leave the execution without losing the plan, or run the
+  open step again after an aborted or failed run.
+- `/plan on|off|status`, matching `/ask`. Without an argument it still toggles.
+- Leaving execution no longer clears the step list; only a finished plan does,
+  so `/plan:status` can still show it.
 - The checklist widget keeps a fixed height. It shows the five steps around
   the current one with `… N above` / `… N below`, so a long plan no longer
   pushes the editor off the screen and the step in progress stays visible.
@@ -12,28 +26,8 @@
   line (`Plan: move the tests`) or `---` between steps is read in full. Those
   shapes silently produced an empty list, so no steps appeared and the
   execute dialog never opened.
-- The two skills are now `commit` and `pr`, invoked with `/skill:commit` and
-  `/skill:pr`. The old `/skill:new-commit` and `/skill:new-pr` names no longer
-  exist, so any muscle memory or script pointing at them must be updated.
-
-## 1.2.0
-
-- The package ships two skills, `new-commit` and `new-pr`, and the `pack` prompt
-  template: semantic commits split by story, pull requests built from the branch
-  diff, and stage-everything-then-pack. They replace the personal copies, so
-  remove `~/.pi/agent/skills/create-commit`, `~/.pi/agent/skills/create-pr` and
-  `~/.pi/agent/prompts/pack.md` to avoid running two of each.
 - `package.test.ts` checks the `pi` manifest against the files on disk, so a
   skill or prompt cannot be declared but left out of the tarball.
-
-## 1.1.0
-
-- `/plan:skip`, `/plan:stop` and `/plan:retry`: mark the current step done and
-  start the next one, leave the execution without losing the plan, or run the
-  open step again after an aborted or failed run.
-- `/plan on|off|status`, matching `/ask`. Without an argument it still toggles.
-- Leaving execution no longer clears the step list; only a finished plan does,
-  so `/plan:status` can still show it.
 - CI: `bun run typecheck` and `bun test` on every push and pull request.
 
 ## 1.0.0
