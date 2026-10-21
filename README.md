@@ -46,14 +46,37 @@ is migrated from their session entries.
 
 ## Skills and prompts
 
-Installing the package installs these too: they are skills and a prompt template
-of their own, not part of the mode runtime.
+The package also ships three git workflows. They are not part of the mode
+runtime: pi keeps a skill out of context until the task matches it (or until you
+force it with `/skill:name`), and a prompt template is just another `/` command.
 
-| Command | What it does |
-|---|---|
-| `/skill:new-commit` | Split the pending changes into semantic commits, one story each |
-| `/skill:new-pr` | Draft or open the pull request from the real branch diff |
-| `/pack` | Stage everything, then pack it with `new-commit` |
+**`new-commit`** — `/skill:new-commit`
+
+Takes the pending changes and groups them by story, not by file or directory.
+Each group becomes one commit: `type(scope): subject`, English and imperative,
+72 characters at most, a body only when it explains *why*, and a
+`BREAKING CHANGE:` or `Relates-to:` footer when they apply. It reads
+`git log --oneline -15` first to copy the repository's own style, and restages
+the index between commits so a message never covers someone else's files.
+
+**`new-pr`** — `/skill:new-pr`
+
+Reads the branch (`git log origin/main..HEAD`, `git diff --stat`) and writes the
+pull request body: summary, why now, changes, how to test, screenshots,
+checklist and deployment notes. With `gh` installed it opens the PR; without it,
+it prints the body for you to paste.
+
+**`pack`** — `/pack`
+
+`git add -A`, then hands the result to `new-commit`, so a mixed working tree
+becomes several commits in one command. It takes extra instructions as an
+argument.
+
+They live in `skills/` and `prompts/`, and there is nothing to install
+separately: `bun test` fails if the `pi` manifest and those folders drift apart.
+If you used these as personal skills before, delete the old `create-commit`,
+`create-pr` and `/pack` copies — pi keeps the first one it finds and warns about
+the duplicate.
 
 ## Modes
 
