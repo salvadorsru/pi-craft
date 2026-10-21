@@ -1,4 +1,4 @@
-# @salvadorsru/pi-modes
+# pi-modes
 
 One owner for editor modes in [pi](https://pi.dev).
 
@@ -9,30 +9,28 @@ one leaves the other active, both `tool_call` guards keep firing, and the last
 extension to call `setActiveTools()` wins. The tool set also gets a snapshot
 that can contain the other mode's restricted tools.
 
-`@salvadorsru/pi-modes` gives those extensions one shared state machine and one
-owner for the tool set. Use it when your extension implements a mode that must
-coexist with other modes.
+`pi-modes` gives those extensions one shared state machine and one owner for the
+tool set. Use it when your extension implements a mode that must coexist with
+other modes.
 
-## Install
+## No registry, no install step
 
-```bash
-npm install @salvadorsru/pi-modes
-```
+This is a **source library, not a published package**. Consumers vendor a copy
+under `vendor/pi-modes/` and import it with a relative path, so
+`pi install git:...` and a plain checkout work with zero dependencies.
 
-or install a local checkout:
-
-```bash
-pi install ./pi-modes
-```
-
-`@salvadorsru/pi-modes` is a library, not an extension: it declares no commands
-on its own. Install it as a dependency of the extension that uses it.
+Vendoring does not duplicate the state: `getModes()` stores the registry on a
+`Symbol.for` slot of `globalThis`, so two physically distinct copies still share
+one current mode, one tool set and one guard.
 
 ## Use
 
+In the consumer package, copy `src/*.ts` to `vendor/pi-modes/` (see
+[Vendoring](#vendoring)) and import it relatively:
+
 ```ts
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { getModes } from "@salvadorsru/pi-modes";
+import { getModes } from "../../vendor/pi-modes/index.js";
 
 export default function askExtension(pi: ExtensionAPI): void {
   const modes = getModes(pi);
@@ -69,10 +67,9 @@ Returns the process-wide `ModeRegistry` and binds it to `pi`. The first call
 installs the runtime handlers (`session_start`, `before_agent_start`, `context`,
 `tool_call`); later calls only bind and let the caller declare more modes.
 
-The runtime is stored on a `Symbol.for` slot of `globalThis`. Pi loads packages
-in separate module roots, so two packages cannot rely on sharing a dependency
-instance; the global slot guarantees that duplicated copies still talk to the
-same registry.
+The runtime is stored on a `Symbol.for` slot of `globalThis` because pi loads
+packages in separate module roots: a vendored copy is a different module, but
+not a different state.
 
 ### `registry.define(spec)`
 
@@ -160,24 +157,24 @@ The last legacy entry wins. A shared `pi-modes` entry always takes precedence.
 ## Guarantees
 
 - Two extensions that call `getModes()` share one registry, one current mode
-  and one tool-set owner.
+  and one tool-set owner, even with physically duplicated vendored copies.
 - Entering a mode calls `onLeave` on the previous mode before applying tools.
 - The baseline is captured before the first mode is applied, so leaving a mode
   never restores another mode's restricted set.
 - A guard or event consumer that throws never breaks a transition.
 
-## Publishing
+## Vendoring
 
-This package is a library, not an extension. Publish it **before** releasing an
-extension that depends on it, so `pi install git:...` and
-`pi install npm:...` can resolve the dependency:
+From this repository:
 
 ```bash
-npm publish --access public
+bun run vendor          # write vendor/pi-modes in ../pi-ask and ../pi-plan
+bun run check-vendor    # fail if a copy is stale
 ```
 
-`pi-ask` 0.2+ and `pi-plan` 0.5+ declare `@salvadorsru/pi-modes` in
-`dependencies`.
+The script (`scripts/vendor.ts`) generates the copies with a header. Edit
+`src/` here, never the vendored files, and re-run `vendor` before committing a
+consumer change.
 
 ## Development
 
@@ -185,8 +182,8 @@ npm publish --access public
 bun test
 ```
 
-The package is plain TypeScript with no build step: pi loads it through jiti,
-like any other pi package.
+The package is plain TypeScript with no build step: pi loads the vendored copies
+through jiti, like any other pi package.
 
 ## License
 
