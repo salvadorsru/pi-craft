@@ -71,7 +71,9 @@ Instructions:
   user picks one or writes their own answer. Do not end your turn with an open
   question in plain text
 - If an answer is not essential, state your assumption and keep planning
-- Output a detailed numbered plan under a "Plan:" header once the task is clear
+- Output a detailed numbered plan under a "Plan:" header once the task is clear.
+  One step per line: a plain "1. text" at the start of the line, and nothing
+  else on the header line. That is the shape the list is read in.
 
 Plan:
 1. First step description

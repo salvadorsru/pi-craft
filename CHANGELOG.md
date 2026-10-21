@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- A plan written with a bold step number (`**1.** …`), a title on the header
+  line (`Plan: move the tests`) or `---` between steps is read in full. Those
+  shapes silently produced an empty list, so no steps appeared and the
+  execute dialog never opened.
 - The two skills are now `commit` and `pr`, invoked with `/skill:commit` and
   `/skill:pr`. The old `/skill:new-commit` and `/skill:new-pr` names no longer
   exist, so any muscle memory or script pointing at them must be updated.

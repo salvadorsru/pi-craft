@@ -48,18 +48,21 @@ function looksLikeQuestion(text: string): boolean {
  *
  * Supports multiple plan header formats:
  * - "Plan:" / "## Plan" / "### Plan" / "**Plan:**"
+ * - a header that carries its own title: "Plan: move the tests" — whatever
+ *   follows the colon on that line is a title, never a step.
  *
- * Only the list that follows the header is read. The first heading or
- * paragraph after that list ends it, so a later "Preguntas:" / "Notes:"
- * section with its own numbered items is not mistaken for steps.
+ * Only the list that follows the header is read. A rule, a heading or a
+ * paragraph *before* the first item is a separator; after it, the first such
+ * line ends the plan, so a later "Preguntas:" section with its own numbered
+ * items is not mistaken for steps. A bold-wrapped number ("**1.** step") is
+ * still a number: plans are written that way.
  */
 export function extractPlanSteps(message: string): PlanStep[] {
   const items: PlanStep[] = [];
 
-  // Match various "Plan:" header formats. The colon is optional so
-  // "## Plan" (a heading without one) also works.
+  // "Plan", "## Plan:", "**Plan:**", "Plan: with a title" — but not "Planning".
   const headerMatch = message.match(
-    /(?:^|\n)\s*(?:#{1,3}\s+)?\*{0,2}Plan\*{0,2}\s*[:：]?\s*\*{0,2}\s*\n/i,
+    /(?:^|\n)[ \t]*(?:#{1,6}[ \t]+)?\*{0,2}Plan\*{0,2}[ \t]*(?:[:：][^\n]*)?\n/i,
   );
   if (!headerMatch) return items;
 
@@ -74,23 +77,30 @@ export function extractPlanSteps(message: string): PlanStep[] {
     items.push({ step: items.length + 1, text, completed: false });
   };
 
+  const rule = /^[ \t]*(?:[-*_][ \t]*){3,}$/;
+  const heading = /^[ \t]*(?:#{1,6}[ \t]+\S.*|\*{1,2}[^*\n]+\*{1,2}[ \t]*)$/;
+
   for (const line of lines) {
-    const numbered = line.match(/^\s*(\d+)[.)]\s+(.+)$/);
+    // A bold-wrapped number is still a number.
+    const numbered = line.match(
+      /^[ \t]*(?:\*{1,2})?(\d+)[.)](?:\*{1,2})?[ \t]+(.+?)\*{0,2}$/,
+    );
     if (numbered) {
       inList = true;
       push(numbered[2]);
       continue;
     }
 
-    const bullet = line.match(/^\s*[-*]\s+(.+)$/);
+    const bullet = line.match(/^[ \t]*[-*][ \t]+(.+)$/);
     if (bullet) {
       inList = true;
       push(bullet[1]);
       continue;
     }
 
-    // Blank lines are allowed between items.
-    if (/^\s*$/.test(line)) continue;
+    // Blank lines and rules separate anywhere; a heading only before the list.
+    if (/^\s*$/.test(line) || rule.test(line)) continue;
+    if (!inList && heading.test(line)) continue;
 
     // A wrapped continuation of the previous item, e.g. an indented line.
     if (inList && /^\s+/.test(line) && items.length > 0) {
@@ -99,8 +109,7 @@ export function extractPlanSteps(message: string): PlanStep[] {
       continue;
     }
 
-    // Anything else is a heading, a paragraph, or a new section: the plan
-    // list has ended. Do not keep scanning the rest of the message.
+    // Anything else is a paragraph or a new section: the plan has ended.
     break;
   }
 

@@ -59,6 +59,39 @@ Preguntas:
     expect(steps).toHaveLength(1);
     expect(steps[0]?.text).toContain("continuation");
   });
+
+  test("parses a bold-wrapped number", () => {
+    const steps = extractPlanSteps(
+      "Plan:\n**1. First real step**\n**2. Second real step**\n",
+    );
+    expect(steps.map((s) => s.text)).toEqual([
+      "First real step",
+      "Second real step",
+    ]);
+  });
+
+  test("reads a header that carries its own title", () => {
+    const steps = extractPlanSteps(
+      "Plan: move the tests out\n1. First real step\n2. Second real step\n",
+    );
+    expect(steps.map((s) => s.step)).toEqual([1, 2]);
+  });
+
+  test("skips a rule between steps", () => {
+    const steps = extractPlanSteps(
+      "Plan:\n1. First real step\n---\n2. Second real step\n",
+    );
+    expect(steps.map((s) => s.step)).toEqual([1, 2]);
+  });
+
+  test("skips a heading between the header and the list", () => {
+    const steps = extractPlanSteps("Plan:\n\n**Rules**\n\n1. First real step\n");
+    expect(steps.map((s) => s.text)).toEqual(["First real step"]);
+  });
+
+  test("does not read a word that only starts with Plan", () => {
+    expect(extractPlanSteps("Planning: 1. not a plan\n")).toHaveLength(0);
+  });
 });
 
 describe("display helpers", () => {
