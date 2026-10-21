@@ -166,6 +166,19 @@ The last legacy entry wins. A shared `pi-modes` entry always takes precedence.
   never restores another mode's restricted set.
 - A guard or event consumer that throws never breaks a transition.
 
+## Publishing
+
+This package is a library, not an extension. Publish it **before** releasing an
+extension that depends on it, so `pi install git:...` and
+`pi install npm:...` can resolve the dependency:
+
+```bash
+npm publish --access public
+```
+
+`pi-ask` 0.2+ and `pi-plan` 0.5+ declare `@salvadorsru/pi-modes` in
+`dependencies`.
+
 ## Development
 
 ```bash
