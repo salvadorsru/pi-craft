@@ -13,11 +13,10 @@
 </p>
 
 `pi-craft` gives [pi](https://github.com/earendil-works/pi) three modes — **ask**,
-**plan** and **execute** — and only one of them is ever active. It replaces the
-separate `pi-ask` and `pi-plan` packages: a single mode runtime owns the tool set,
-the read-only guard, the instructions and the persistence, so two modes can never
-fight over the active tools. It also ships the commit and pull-request workflows
-below, so installing it is all it takes.
+**plan** and **execute** — and only one of them is ever active. A single mode
+runtime owns the tool set, the read-only guard, the instructions and the
+persistence, so two modes can never fight over the active tools. It also ships
+the commit and pull-request workflows below, so installing it is all it takes.
 
 ## Install
 
@@ -28,8 +27,8 @@ pi install git:github.com/salvadorsru/pi-craft
 From a local checkout: `pi install ./pi-craft`. There is no build step and no
 dependency: pi loads the TypeScript extension directly.
 
-Remove `pi-ask` and `pi-plan` before installing; the last mode you were in is
-migrated from their session entries.
+Coming from `pi-ask` or `pi-plan`? Remove them first: the last mode you were in
+is migrated from their session entries.
 
 ## Usage
 
