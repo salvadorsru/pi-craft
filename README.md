@@ -1,123 +1,108 @@
 # pi-craft
 
-Three ways to work on a codebase, one mode at a time:
+<p align="center">
+  <img src="assets/banner.png" alt="pi-craft — three ways in, one mode at a time.">
+</p>
 
-- **Ask** — read-only questions. The model reads the project to answer, but
-  cannot change it.
-- **Plan** — read-only exploration that turns the analysis into a numbered
-  plan.
-- **Execute** — runs the plan one step at a time with live progress.
+> Three ways in, one mode at a time.
 
-`/ask` and `/plan` are mutually exclusive: entering one leaves the other. The
-tool set, the read-only guard, the instructions and persistence are owned by a
-single mode runtime, so two modes can never fight over the active tools.
+<p align="center">
+  <img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue.svg">
+  <img alt="pi package" src="https://img.shields.io/badge/pi-package-brightgreen.svg">
+  <img alt="No build step" src="https://img.shields.io/badge/build-none-3178c6.svg">
+</p>
+
+`pi-craft` gives [pi](https://github.com/earendil-works/pi) three modes — **ask**,
+**plan** and **execute** — and only one of them is ever active. It replaces the
+separate `pi-ask` and `pi-plan` packages: a single mode runtime owns the tool set,
+the read-only guard, the instructions and the persistence, so two modes can never
+fight over the active tools.
 
 ## Install
-
-From GitHub:
 
 ```bash
 pi install git:github.com/salvadorsru/pi-craft
 ```
 
-From a local checkout:
+From a local checkout: `pi install ./pi-craft`. There is no build step and no
+dependency: pi loads the TypeScript extension directly.
 
-```bash
-pi install ./pi-craft
-```
-
-No build step and no dependencies: pi loads the TypeScript extension directly.
-
-> Replaces `pi-ask` and `pi-plan`. Remove them before installing `pi-craft`;
-> the last mode is migrated from their session entries.
+Remove `pi-ask` and `pi-plan` before installing; the last mode you were in is
+migrated from their session entries.
 
 ## Usage
 
 | Input | What it does |
 |---|---|
 | `/ask` | Toggle ask mode |
-| `/ask on` / `/ask off` / `/ask status` | Control ask mode explicitly |
 | `/ask <question>` | Turn ask mode on and ask in one step |
-| `Ctrl+Alt+A` | Toggle ask mode |
-| `--ask` | Start in ask mode |
+| `/ask on` · `/ask off` · `/ask status` | Control ask mode explicitly |
+| `Ctrl+Alt+A` · `--ask` | Shortcut and startup flag |
 | `/plan` | Toggle plan mode |
-| `/plan:status` | Show the current plan and progress |
-| `Ctrl+Alt+P` | Toggle plan mode |
-| `--plan` | Start in plan mode |
+| `/plan:status` | Show the current plan and its progress |
+| `Ctrl+Alt+P` · `--plan` | Shortcut and startup flag |
 
-### Ask mode
+## Modes
 
-Read the code before answering, cite `file:line`, and propose changes instead of
-applying them. The footer shows `ask` in the success color.
+### Ask
 
-### Plan mode
+Read the code, answer, cite `file:line`, and propose a change instead of applying
+it. The footer shows `ask` while the mode is on.
 
-Ask the agent to analyze the code and write a plan under a `Plan:` header.
-Then choose **Execute the plan**, **Stay in plan mode**, or **Refine the plan**.
-Execution runs one step per agent run: the checklist advances while the plan is
-running, and the final card repeats the completed list with a summary.
+### Plan
 
-While planning, the agent can ask structured questions with the `ask_question`
-tool: a selector with suggested answers and an **Other — write my own answer**
-entry. Asking does not tick the current step.
+Explore, then write a numbered list under a `Plan:` header. pi turns it into a
+checklist and asks what to do: **Execute the plan**, **Stay in plan mode** or
+**Refine the plan**.
 
-## What the modes restrict
-
-- **Tools**: `edit`, `write` and `powershell` are removed while ask or plan is
-  active. Plan keeps `read`, `bash`, `grep`, `find`, `ls` and `ask_question`;
-  ask keeps the same set without `ask_question`.
-- **Bash**: only read-only commands. The check requires every pipe segment to be
-  a known read-only command (`cat`, `head`, `grep`, `rg`, `find`, `ls`, `tree`,
-  `jq`, `git status/log/diff/show`, `cargo tree/metadata`, …) and rejects
-  redirection, chaining, substitution, flags that write (`find -delete`,
-  `sort -o`, `git -c`, …), dangerous assignments, interpreters and package
-  managers.
-- **Third-party tools**: tools that declare `destructiveHint` or
-  `openWorldHint` without `readOnlyHint` are blocked too.
-
-The guard is a second line of defense: even if a tool is re-activated
-mid-session, a mutating call is rejected while a read-only mode is current.
-
-## Icons
-
-The UI uses single-width ASCII, not emoji, so the footer and the checklist keep
-their columns in any terminal and font:
+When the plan needs a decision, the agent calls `ask_question` instead of ending
+its turn with a question in prose: a selector with short options and a free-text
+answer. The same tool is available while executing, so a step can resolve a
+detail without leaving the plan.
 
 ```
-ask                     plan 2/3
-Plan  ###---  1/3 · 33%
-[x] 1. Parse the config
-[>] 2. Add the new option
-[ ] 3. Update the docs
+Plan  ######------------  1/3 · 33%
+[x] 1. Extract the numbered steps from the reply
+[>] 2. Advance the cursor between runs
+[ ] 3. Show the final card with a summary
 ```
 
-`[x]` done, `[>]` current, `[ ]` pending. The progress bar is `#`/`-`.
+### Execute
 
-## State and migration
+One step per agent run: the checklist advances between runs, so progress shows
+up during the work rather than at the end. A step that needs no tool call
+declares `[DONE:n]`. When the last step ends, the card repeats the whole list
+with the duration and, expanded, the files that changed.
 
-The current mode is persisted as a `pi-craft` session entry and restored from
-the active branch on resume. Older entries are migrated:
+## What the modes block
 
-- `pi-plan` (plan mode and execution)
-- `ask-mode` (`pi-ask`)
-- `pi-modes` (the short-lived shared runtime)
+- **Tools.** `edit`, `write` and `powershell` are removed while ask or plan is
+  active; the full set comes back when you leave.
+- **Bash.** Every pipe segment must be a read-only command (`cat`, `grep`, `rg`,
+  `find`, `ls`, `tree`, `jq`, `git status/log/diff/show`, `cargo tree`, …).
+  Redirection, chaining, substitution, `find -delete`, `sort -o`, `git -c`,
+  env assignments that repoint `PATH` or `LD_PRELOAD`, interpreters and package
+  managers are rejected.
+- **Third-party tools.** A tool that declares `destructiveHint` or
+  `openWorldHint` without `readOnlyHint` is blocked too.
+
+The guard is a second line of defence: a mutating call is rejected while a
+read-only mode is current, even if the tool was re-enabled mid-session.
 
 ## Architecture
 
 ```
-extensions/craft/index.ts   wires the modes together
-src/modes/                  mode state, tool ownership, guard, shell policy
+extensions/craft/index.ts   wires the modes and the legacy entries
+src/modes/                  mode state, tool ownership, guard, bash allowlist
 src/ask/                    ask mode: commands, badge, instructions
-src/plan/                   plan mode: parser, progress, renderers, questions
+src/plan/                   plan mode: parser, progress, cards, questions
 ```
 
-- One `ModeRegistry` per extension session owns the current mode.
-- Only the registry calls `pi.setActiveTools()`; entering a mode applies its
-  set, leaving restores the baseline captured before any mode was applied.
-- The registry injects the mode instructions and filters them out once the mode
-  is off.
-- `onEnter`/`onLeave` let plan keep its steps when moving to execution and
-  reset them when leaving to another mode.
+- One `ModeRegistry` per session; only it calls `setActiveTools()`, and leaving a
+  mode restores the set captured before any mode was applied.
+- The mode lives in a `pi-craft` session entry and is restored from the active
+  branch on resume; entries from `pi-ask`, `pi-plan` and the short-lived
+  `pi-modes` runtime are migrated.
 
 ## Development
 
@@ -125,26 +110,8 @@ src/plan/                   plan mode: parser, progress, renderers, questions
 bun test
 ```
 
-The suite covers the mode runtime, the shell policy, plan extraction, progress
-rendering, clarifying questions, the full extension flow with a mocked pi, and
-the ask/plan handoff.
-
-## Español
-
-Tres modos, uno a la vez:
-
-- **Ask** (`/ask`, `Ctrl+Alt+A`, `--ask`): preguntas de solo lectura.
-- **Plan** (`/plan`, `Ctrl+Alt+P`, `--plan`): exploración de solo lectura y plan
-  numerado; `/plan:status` muestra el progreso.
-- **Execute**: lo elige el agente al confirmar el plan, y avanza un paso por
-  corrida.
-
-`/ask` y `/plan` son mutuamente excluyentes: entrar a uno apaga el otro. La
-iconografía es ASCII de ancho fijo para que no se desalinee en ningún terminal.
-
-```bash
-pi install git:github.com/salvadorsru/pi-craft
-```
+The suite covers the mode runtime, the bash allowlist, plan extraction, progress
+rendering, the question tool, and the full flow against a mocked pi.
 
 ## License
 
