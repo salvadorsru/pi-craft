@@ -27,6 +27,9 @@ export const MODE_CHANGE_CHANNEL = "pi-craft:change";
 /** `customType` of the persisted mode entry. */
 export const MODE_ENTRY_TYPE = "pi-craft";
 
+/** `customType` pi-undo-redo appends when it snapshots a rewind. */
+const REWIND_ENTRY_TYPE = "pi-undo-redo";
+
 interface ToolAnnotations {
 	readOnlyHint?: boolean;
 	destructiveHint?: boolean;
@@ -248,8 +251,17 @@ export class ModeRegistry {
 		let fromSharedEntry = false;
 		const branch = this.branchOf(ctx);
 
+		// A rewind truncates the branch and appends itself, so every entry before it
+		// describes a path the user left. Replaying the mode recorded there is what
+		// turns an undo into "plan mode is on again": only what came after counts.
+		const rewound = branch.reduce(
+			(last, entry, index) => (entry.customType === REWIND_ENTRY_TYPE ? index : last),
+			-1,
+		);
+
 		// The shared entry is authoritative when present.
-		for (const entry of branch) {
+		for (const [index, entry] of branch.entries()) {
+			if (index <= rewound) continue;
 			if (entry.type !== "custom" || entry.customType !== MODE_ENTRY_TYPE) continue;
 			fromSharedEntry = true;
 			const mode = (entry.data as { mode?: unknown } | undefined)?.mode;
@@ -261,7 +273,8 @@ export class ModeRegistry {
 			// The last one wins, which is deterministic and fixes the old
 			// "both read-only guards are on" state.
 			let foundLegacy = false;
-			for (const entry of branch) {
+			for (const [index, entry] of branch.entries()) {
+				if (index <= rewound) continue;
 				if (entry.type !== "custom" || !entry.customType) continue;
 				const resolve = this.legacyResolvers.get(entry.customType);
 				if (!resolve) continue;

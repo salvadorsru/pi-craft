@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Undo no longer turns plan mode back on. The mode is recorded in the session
+  branch, so a rewind restored the last entry it had just left: the toggle
+  worked, and the next undo silently undid it.
 - A plan written with a bold step number (`**1.** …`), a title on the header
   line (`Plan: move the tests`) or `---` between steps is read in full. Those
   shapes silently produced an empty list, so no steps appeared and the

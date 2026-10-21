@@ -176,6 +176,34 @@ describe("mode runtime", () => {
 		expect(h.activeTools()).not.toContain("edit");
 	});
 
+	test("does not restore a mode recorded before an undo rewind", async () => {
+		const h = makeHarness({
+			branch: [
+				{ type: "custom", customType: "pi-craft", data: { mode: "plan" } },
+				{ type: "custom", customType: "pi-undo-redo", data: { userEntryId: "u1" } },
+			],
+		});
+
+		await h.emit("session_start", {}, h.ctx);
+
+		expect(h.modes.current()).toBeUndefined();
+		expect(h.activeTools()).toEqual(["read", "bash", "edit", "write"]);
+	});
+
+	test("restores a mode recorded after the last rewind", async () => {
+		const h = makeHarness({
+			branch: [
+				{ type: "custom", customType: "pi-undo-redo", data: { userEntryId: "u1" } },
+				{ type: "custom", customType: "pi-craft", data: { mode: "ask" } },
+			],
+		});
+
+		await h.emit("session_start", {}, h.ctx);
+
+		expect(h.modes.current()).toBe("ask");
+		expect(h.activeTools()).not.toContain("edit");
+	});
+
 	test("legacy entries: the last one wins and shared entries beat them", async () => {
 		const legacy = makeHarness({
 			branch: [
