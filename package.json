@@ -1,0 +1,42 @@
+{
+  "name": "@salvadorsru/pi-modes",
+  "version": "0.1.0",
+  "description": "One owner for Pi editor modes: shared mode state, tool sets and read-only policy for Pi extensions",
+  "type": "module",
+  "license": "MIT",
+  "author": "salvadorsru",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/salvadorsru/pi-modes.git"
+  },
+  "homepage": "https://github.com/salvadorsru/pi-modes#readme",
+  "bugs": {
+    "url": "https://github.com/salvadorsru/pi-modes/issues"
+  },
+  "keywords": [
+    "pi",
+    "pi-extension",
+    "mode",
+    "read-only",
+    "tool-policy"
+  ],
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "types": "./src/index.ts",
+  "scripts": {
+    "test": "bun test"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  }
+}
