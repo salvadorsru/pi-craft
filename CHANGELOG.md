@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.3.0
 
 - A re-stated plan keeps the ticks of the steps it repeats: replacing the list no
   longer resets every step to open when the same work is written again with a note or
