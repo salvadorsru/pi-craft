@@ -10,10 +10,12 @@
  * - Read-only bash check shared with ask mode through the mode runtime
  * - Extracts numbered plan steps from "Plan:" sections
  * - [DONE:n] markers as an early completion signal during a step
+ * - `/plan:done`: a step the parent finished itself, marked without re-running it
  * - One agent run per step: the checklist advances between runs, so it never
  *   waits for the final message
  * - Live checklist: progress bar, current step and completed ticks while the
  *   plan is running
+ * - A re-statement of the plan keeps the ticks of the steps it repeats
  * - Final card with the whole completed checklist, duration and changed files
  * - Branch-aware state via session entries
  */
@@ -26,7 +28,11 @@ import type {
 import type { ModeRegistry } from "../modes/index.js";
 import { extractPlanSteps } from "./planner.js";
 import { createRunner, type StepRunner } from "./agents.js";
-import { markCompletedSteps, getCompletionStats } from "./progress.js";
+import {
+  carryCompletion,
+  markCompletedSteps,
+  getCompletionStats,
+} from "./progress.js";
 import {
   cardLines,
   statusText,
@@ -360,9 +366,12 @@ needs a decision you cannot take, stop and say what you need.`;
     }
   }
 
-  /** Every step is done: show the final card and leave execute mode. */
+  /**
+   * Every step is done: show the final card, and leave execute mode if that is where
+   * the plan ran. A plan closed by hand (`/plan:done`) closes the same way.
+   */
   function finishPlan(ctx: ExtensionContext): void {
-    if (!modes.is("execute")) return;
+    if (steps.length === 0 || currentStep()) return;
     const { completed, total } = getCompletionStats(steps);
     const durationMs = startedAt ? Date.now() - startedAt : undefined;
     const files = [...filesTouched].sort();
@@ -386,7 +395,7 @@ needs a decision you cannot take, stop and say what you need.`;
       { triggerTurn: false },
     );
 
-    modes.leave(ctx);
+    if (modes.is("execute")) modes.leave(ctx);
     // The card already carries the finished list: drop it so a later
     // `/plan:status` does not report a plan that is over.
     resetExecution();
@@ -638,6 +647,42 @@ needs a decision you cannot take, stop and say what you need.`;
     },
   });
 
+  pi.registerCommand("plan:done", {
+    description: "Mark a step done without running it (default: the current one)",
+    handler: async (args, ctx) => {
+      if (steps.length === 0) {
+        ctx.ui.notify("No plan to close. Use /plan to start one.", "info");
+        return;
+      }
+      if (running) {
+        // The batch in flight claims its steps when it ends: marking one now would
+        // leave the runner and the checklist disagreeing about what it did.
+        ctx.ui.notify("A subagent is working on the plan.", "info");
+        return;
+      }
+      const asked = Number.parseInt(args.trim(), 10);
+      const step = Number.isInteger(asked)
+        ? steps.find((s) => s.step === asked)
+        : currentStep();
+      if (!step) {
+        ctx.ui.notify(
+          Number.isInteger(asked)
+            ? `There is no step ${asked}.`
+            : "Every step is done.",
+          "info",
+        );
+        return;
+      }
+      // The plan can be finished by the main agent, not only by the batch runner:
+      // this is the door for a step whose work happened outside `beginStep`.
+      step.completed = true;
+      persistState();
+      updateUI(ctx);
+      ctx.ui.notify(`Step ${step.step} marked done.`, "info");
+      if (!currentStep()) finishPlan(ctx);
+    },
+  });
+
   pi.registerCommand("plan:stop", {
     description: "Leave the execution and keep the plan",
     handler: async (_args, ctx) => {
@@ -708,7 +753,9 @@ needs a decision you cannot take, stop and say what you need.`;
         .join("\n");
       const extracted = extractPlanSteps(text);
       if (extracted.length > 0) {
-        steps = extracted;
+        // A re-statement of the same plan keeps the ticks of the steps it repeats:
+        // rewriting the list must not undo what is already done.
+        steps = carryCompletion(steps, extracted);
         persistState();
         updateUI(ctx);
       }

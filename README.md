@@ -42,7 +42,7 @@ is migrated from their session entries.
 | `/plan on` · `/plan off` · `/plan status` | Control plan mode explicitly |
 | `/plan:status` | Show the current plan and its progress |
 | `/plan:batch <n>` | Steps one subagent runs at once (default 3) |
-| `/plan:skip` · `/plan:stop` · `/plan:retry` | Drop the step in flight, stop the run, retry the open step |
+| `/plan:skip` · `/plan:done` · `/plan:stop` · `/plan:retry` | Drop the step in flight, mark a step done by hand, stop the run, retry the open step |
 | `Ctrl+Alt+P` · `--plan` | Shortcut and startup flag |
 
 ## Skills and prompts
@@ -126,6 +126,8 @@ Two things change because the work leaves the main session:
   so `/plan:status` can still show it.
 
 `/plan:skip` drops the step in flight and restarts the batch without it.
+`/plan:done [n]` marks a step done without running it — the door for work the main
+agent did itself, which is otherwise left open (and the checklist stuck at `0/n`).
 
 ## What the modes block
 

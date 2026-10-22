@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- A re-stated plan keeps the ticks of the steps it repeats: replacing the list no
+  longer resets every step to open when the same work is written again with a note or
+  a rephrase.
+- `/plan:done [n]` closes a step whose work the main agent did outside the batch
+  runner; without it such a plan stayed at `0/n` for good. `finishPlan` also works
+  outside execute mode, so that plan gets its final card.
 
 - Plan execution runs in subagents: each batch of up to three consecutive steps
   (`/plan:batch <n>`) runs in its own session, in plan order, so a batch never
