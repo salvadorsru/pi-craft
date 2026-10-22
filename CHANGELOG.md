@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+
+- Plan execution runs in subagents: each batch of up to three consecutive steps
+  (`/plan:batch <n>`) runs in its own session, in plan order, so a batch never
+  splits a step from the one it depends on. The main session keeps the plan and
+  the checklist while the work happens in a clean context.
+- The parent no longer ticks steps from its own messages or from `[DONE:n]` in
+  them, and resuming reads the completed steps from the persisted entry instead
+  of scanning the branch.
+- A subagent has no UI, so `ask_question` is not available while executing. `Esc`
+  no longer aborts a step either: `/plan:stop` aborts the subagent in flight.
+
 ## 1.2.0
 
 - The two skills are now `commit` and `pr`, invoked with `/skill:commit` and

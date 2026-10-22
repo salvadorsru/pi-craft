@@ -1,10 +1,50 @@
 import { describe, expect, test } from "bun:test";
 import craftExtension from "../extensions/craft/index.ts";
+import type { StepResult, StepRunner } from "../src/plan/agents.ts";
 import { OTHER_OPTION } from "../src/plan/question.ts";
 
 type Handler = (...args: any[]) => any;
 
 let strikeCalls = 0;
+
+/** Subagent that finishes its batch at once, with the markers it was given. */
+const instant: StepRunner = async (prompt) => ({
+  text: [...prompt.matchAll(/\[DONE:\d+\]/g)].map((match) => match[0]).join(" "),
+  files: [],
+  stopReason: "stop",
+  usedTools: true,
+});
+
+/** Subagent whose runs finish only when the test resolves or aborts them. */
+function pending() {
+  const resolvers: Array<(result: StepResult) => void> = [];  const prompts: string[] = [];
+  const run: StepRunner = (prompt, signal) =>
+    new Promise((resolve) => {
+      prompts.push(prompt);
+      const settle = (result: StepResult) => {
+        const index = resolvers.indexOf(settle);
+        if (index !== -1) resolvers.splice(index, 1);
+        resolve(result);
+      };
+      resolvers.push(settle);
+      signal?.addEventListener(
+        "abort",
+        () => settle({ text: "", files: [], stopReason: "aborted", usedTools: true }),
+        { once: true },
+      );
+    });
+  return {
+    run,
+    prompts,
+    resolve(
+      result: StepResult = { text: "", files: [], stopReason: "stop", usedTools: true },
+    ) {
+      resolvers.shift()?.(result);
+    },
+  };
+}
+
+const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 const theme = {
   fg: (color: string, text: string) => `[${color}]${text}[/${color}]`,
@@ -21,6 +61,7 @@ function makeHarness(
     choice?: string | null;
     input?: string;
     confirm?: boolean;
+    run?: StepRunner;
   } = {},
 ) {
   strikeCalls = 0;
@@ -128,7 +169,7 @@ function makeHarness(
     return component.render(80);
   };
 
-  craftExtension(pi);
+  craftExtension(pi, { run: options.run ?? instant });
 
   return {
     activeTools: () => activeTools,
@@ -153,8 +194,15 @@ const planText = `Plan:
 1. Fix the parser in src/planner.ts.
 2. Keep the full step text.`;
 
+const fiveStepsText = `Plan:
+1. First step.
+2. Second step.
+3. Third step.
+4. Fourth step.
+5. Fifth step.`;
+
 describe("plan extension", () => {
-  test("sends the first step and drops the plan-mode context", async () => {
+  test("sends the first batch and drops the plan-mode context", async () => {
     const h = makeHarness();
     await h.emit("session_start", {}, h.ctx);
     await h.commands.get("plan").handler("", h.ctx);
@@ -168,8 +216,10 @@ describe("plan extension", () => {
     expect(exec).toBeDefined();
     expect(exec.message.content).toContain("Remaining steps:");
     expect(exec.message.content).toContain("1. Fix the parser in src/planner.ts.");
-    expect(exec.message.content).toContain("Work on step 1 only:");
-    expect(exec.message.content).toContain("[DONE:1]");
+    expect(exec.message.content).toContain("Work on these steps only, in order:");
+    expect(exec.message.content).toContain("steps 1-2 of 2");
+    expect(exec.message.content).toContain("[DONE:1] [DONE:2]");
+    expect(exec.options).toEqual({ triggerTurn: false });
     expect(exec.message.details.steps).toHaveLength(2);
 
     const contextHandler = h.handlers.get("context")?.[0];
@@ -209,8 +259,15 @@ describe("plan extension", () => {
     expect(text).toContain("Fix the parser in src/planner.ts.");
   });
 
-  test("checks a step as soon as [DONE:n] is written and completes the plan", async () => {
-    const h = makeHarness();
+  test("ticks the batch from [DONE:n] even when the subagent ran no tools", async () => {
+    const h = makeHarness({
+      run: async () => ({
+        text: "Done with both. [DONE:1] [DONE:2]",
+        files: [],
+        stopReason: "stop",
+        usedTools: false,
+      }),
+    });
     await h.emit("session_start", {}, h.ctx);
     await h.commands.get("plan").handler("", h.ctx);
     await h.emit(
@@ -219,41 +276,6 @@ describe("plan extension", () => {
       h.ctx,
     );
 
-    // The widget now highlights the step being worked on.
-    expect(h.widgetLines("pi-plan-todos")?.join("\n")).toContain("[>]");
-
-    await h.emit(
-      "message_update",
-      {
-        message: {
-          role: "assistant",
-          content: [{ type: "text", text: "Done with the first. [DONE:1]" }],
-        },
-      },
-      h.ctx,
-    );
-
-    expect(h.statuses["pi-plan"]).toContain("1/2");
-    const afterFirst = h.widgetLines("pi-plan-todos") ?? [];
-    expect(afterFirst[0]).toContain("1/2");
-    expect(afterFirst[1]).toContain("[success]");
-    expect(afterFirst[1]).toContain("[x]");
-    // The next step is the one in progress.
-    expect(afterFirst[2]).toContain("[>]");
-
-    await h.emit(
-      "message_update",
-      {
-        message: {
-          role: "assistant",
-          content: [{ type: "text", text: "Done with the second. [DONE:2]" }],
-        },
-      },
-      h.ctx,
-    );
-    expect(h.statuses["pi-plan"]).toContain("2/2");
-
-    await h.emit("agent_end", { messages: [] }, h.ctx);
     const complete = h.sent.find(
       (item) => item.message?.customType === "pi-plan-complete",
     );
@@ -262,24 +284,28 @@ describe("plan extension", () => {
       true,
     );
     expect(h.widgets["pi-plan-todos"]).toBeUndefined();
+    expect(h.statuses["pi-plan"]).toBeUndefined();
 
-    // The final card repeats the whole list, with ticks and a summary.
     const card = h.renderMessage("pi-plan-complete", complete.message).join("\n");
     expect(card).toContain("Plan complete");
     expect(card).toContain("2/2 steps");
     expect(card).toContain("[x]");
     expect(card).toContain("Fix the parser in src/planner.ts.");
     expect(card).toContain("Keep the full step text.");
-
-    // Strikethrough is gone from every surface.
     expect(card).not.toContain("~~");
-    expect(complete.message.content).not.toContain("~~");
     expect(complete.message.content).toContain("- [x] 1.");
     expect(h.strikethroughCalls()).toBe(0);
   });
 
-  test("advances one step per run even when the model emits no [DONE] tags", async () => {
-    const h = makeHarness();
+  test("completes a whole batch in one subagent run without markers", async () => {
+    const h = makeHarness({
+      run: async () => ({
+        text: "Parser fixed.",
+        files: ["src/planner.ts"],
+        stopReason: "stop",
+        usedTools: true,
+      }),
+    });
     await h.emit("session_start", {}, h.ctx);
     await h.commands.get("plan").handler("", h.ctx);
     await h.emit(
@@ -288,73 +314,34 @@ describe("plan extension", () => {
       h.ctx,
     );
 
-    // First run: the model works with tools but never writes [DONE:n].
-    await h.emit("agent_start", {});
-    await h.emit("tool_call", {
-      toolName: "edit",
-      input: { path: "src/planner.ts" },
-    });
-    await h.emit(
-      "agent_end",
-      {
-        messages: [
-          {
-            role: "assistant",
-            stopReason: "stop",
-            content: [{ type: "text", text: "Parser fixed." }],
-          },
-        ],
-      },
-      h.ctx,
-    );
-
-    // The widget ticked the first step and the next run is already queued.
-    expect(h.statuses["pi-plan"]).toContain("1/2");
-    const afterFirst = h.widgetLines("pi-plan-todos") ?? [];
-    expect(afterFirst[1]).toContain("[x]");
-    expect(afterFirst[2]).toContain("[>]");
-
-    const execMessages = h.sent.filter(
+    const runs = h.sent.filter(
       (item) => item.message?.customType === "pi-plan-execute",
     );
-    expect(execMessages).toHaveLength(2);
-    expect(execMessages[1].message.content).toContain("Work on step 2 only:");
-    expect(execMessages[1].message.content).not.toContain("Work on step 1 only:");
-    expect(execMessages[1].options).toEqual({ triggerTurn: true });
-    expect(execMessages[1].message.details.steps[0].completed).toBe(true);
+    expect(runs).toHaveLength(1);
 
-    // Second run completes the plan.
-    await h.emit("agent_start", {});
-    await h.emit("tool_call", {
-      toolName: "edit",
-      input: { path: "src/planner.ts" },
-    });
-    await h.emit(
-      "agent_end",
-      {
-        messages: [
-          {
-            role: "assistant",
-            stopReason: "stop",
-            content: [{ type: "text", text: "Text kept whole." }],
-          },
-        ],
-      },
-      h.ctx,
-    );
-
-    expect(h.statuses["pi-plan"]).toBeUndefined();
-    expect(h.widgets["pi-plan-todos"]).toBeUndefined();
     const complete = h.sent.find(
       (item) => item.message?.customType === "pi-plan-complete",
     );
     expect(complete).toBeDefined();
     expect(complete.message.details.files).toEqual(["src/planner.ts"]);
+    expect(complete.message.details.steps.every((step: any) => step.completed)).toBe(
+      true,
+    );
+    expect(h.statuses["pi-plan"]).toBeUndefined();
     expect(h.strikethroughCalls()).toBe(0);
   });
 
-  test("does not advance a step when the run was aborted or did no work", async () => {
-    const h = makeHarness();
+  test("leaves the batch open when the subagent was aborted or did no work", async () => {
+    const results: StepResult[] = [
+      { text: "", files: [], stopReason: "aborted", usedTools: true },
+      {
+        text: "Which file should I start with?",
+        files: [],
+        stopReason: "stop",
+        usedTools: false,
+      },
+    ];
+    const h = makeHarness({ run: async () => results.shift()! });
     await h.emit("session_start", {}, h.ctx);
     await h.commands.get("plan").handler("", h.ctx);
     await h.emit(
@@ -363,50 +350,25 @@ describe("plan extension", () => {
       h.ctx,
     );
 
-    // Aborted after using a tool: the step stays open.
-    await h.emit("agent_start", {});
-    await h.emit("tool_call", {
-      toolName: "edit",
-      input: { path: "src/planner.ts" },
-    });
-    await h.emit(
-      "agent_end",
-      {
-        messages: [
-          {
-            role: "assistant",
-            stopReason: "aborted",
-            content: [{ type: "text", text: "" }],
-          },
-        ],
-      },
-      h.ctx,
-    );
     expect(h.statuses["pi-plan"]).toContain("0/2");
 
     // A run that only replied (no tool call, no marker) is not progress either.
-    await h.emit("agent_start", {});
-    await h.emit(
-      "agent_end",
-      {
-        messages: [
-          {
-            role: "assistant",
-            stopReason: "stop",
-            content: [{ type: "text", text: "Which file should I start with?" }],
-          },
-        ],
-      },
-      h.ctx,
-    );
+    await h.commands.get("plan:retry").handler("", h.ctx);
     expect(h.statuses["pi-plan"]).toContain("0/2");
     expect(
       h.sent.filter((item) => item.message?.customType === "pi-plan-execute"),
-    ).toHaveLength(1);
+    ).toHaveLength(2);
   });
 
   test("summarises the files touched while executing", async () => {
-    const h = makeHarness();
+    const h = makeHarness({
+      run: async () => ({
+        text: "[DONE:1] [DONE:2]",
+        files: ["src/planner.ts", "tests/planner.test.ts", "src/planner.ts"],
+        stopReason: "stop",
+        usedTools: true,
+      }),
+    });
     await h.emit("session_start", {}, h.ctx);
     await h.commands.get("plan").handler("", h.ctx);
     await h.emit(
@@ -414,34 +376,6 @@ describe("plan extension", () => {
       { messages: [{ role: "assistant", content: [{ type: "text", text: planText }] }] },
       h.ctx,
     );
-
-    await h.emit("tool_call", {
-      toolName: "edit",
-      input: { path: "src/planner.ts" },
-    });
-    await h.emit("tool_call", {
-      toolName: "write",
-      input: { path: "tests/planner.test.ts" },
-    });
-    // The same file twice is still one file.
-    await h.emit("tool_call", {
-      toolName: "edit",
-      input: { path: "src/planner.ts" },
-    });
-    // Not a file mutation: not counted.
-    await h.emit("tool_call", { toolName: "bash", input: { command: "ls" } });
-
-    await h.emit(
-      "message_update",
-      {
-        message: {
-          role: "assistant",
-          content: [{ type: "text", text: "[DONE:1] [DONE:2]" }],
-        },
-      },
-      h.ctx,
-    );
-    await h.emit("agent_end", { messages: [] }, h.ctx);
 
     const complete = h.sent.find(
       (item) => item.message?.customType === "pi-plan-complete",
@@ -474,16 +408,9 @@ describe("plan extension", () => {
           data: {
             mode: "execute",
             steps: [
-              { step: 1, text: "First real step", completed: false },
+              { step: 1, text: "First real step", completed: true },
               { step: 2, text: "Second real step", completed: false },
             ],
-          },
-        },
-        {
-          type: "message",
-          message: {
-            role: "assistant",
-            content: [{ type: "text", text: "First done. [DONE:1]" }],
           },
         },
       ],
@@ -491,8 +418,8 @@ describe("plan extension", () => {
 
     await h.emit("session_start", {}, h.ctx);
 
-    // Resuming does not start a turn on its own: the checklist is restored
-    // and the next user message continues from the first pending step.
+    // Resuming does not start a subagent on its own: the checklist is restored
+    // from the persisted entry and /plan:retry continues from the open step.
     expect(h.sent).toHaveLength(0);
     expect(h.statuses["pi-plan"]).toContain("1/2");
     const lines = h.widgetLines("pi-plan-todos") ?? [];
@@ -510,15 +437,8 @@ describe("plan extension", () => {
           customType: "pi-plan",
           data: {
             mode: "execute",
-            steps: [{ step: 1, text: "Only step", completed: false }],
+            steps: [{ step: 1, text: "Only step", completed: true }],
             startedAt: Date.now() - 5_000,
-          },
-        },
-        {
-          type: "message",
-          message: {
-            role: "assistant",
-            content: [{ type: "text", text: "[DONE:1]" }],
           },
         },
       ],
@@ -677,78 +597,74 @@ describe("plan extension", () => {
     expect(h.statuses["pi-plan"]).toContain("plan");
   });
 
-  test("a question asked while executing does not tick the current step", async () => {
-    const h = makeHarness();
+  test("/plan:skip drops the step in flight and starts the rest", async () => {
+    const four = `Plan:
+1. First step.
+2. Second step.
+3. Third step.
+4. Fourth step.`;
+    const child = pending();
+    const h = makeHarness({ run: child.run });
     await h.emit("session_start", {}, h.ctx);
     await h.commands.get("plan").handler("", h.ctx);
-    await h.emit(
+    const executing = h.emit(
       "agent_end",
-      { messages: [{ role: "assistant", content: [{ type: "text", text: planText }] }] },
+      { messages: [{ role: "assistant", content: [{ type: "text", text: four }] }] },
       h.ctx,
     );
+    await flush();
 
-    await h.emit("agent_start", {});
-    await h.emit("tool_call", {
-      toolName: "ask_question",
-      input: { question: "Refactor or patch?" },
-    });
-    await h.emit(
-      "agent_end",
-      {
-        messages: [
-          {
-            role: "assistant",
-            stopReason: "stop",
-            content: [{ type: "text", text: "Waiting for your answer." }],
-          },
-        ],
-      },
-      h.ctx,
-    );
-
-    // Step 1 stays open and no new execute run was queued.
-    expect(h.statuses["pi-plan"]).toContain("0/2");
-    expect(
-      h.sent.filter((item) => item.message?.customType === "pi-plan-execute"),
-    ).toHaveLength(1);
-  });
-
-  test("/plan:skip completes the current step and sends the next one", async () => {
-    const h = makeHarness();
-    await h.emit("session_start", {}, h.ctx);
-    await h.commands.get("plan").handler("", h.ctx);
-    await h.emit(
-      "agent_end",
-      { messages: [{ role: "assistant", content: [{ type: "text", text: planText }] }] },
-      h.ctx,
-    );
+    expect(child.prompts[0]).toContain("steps 1-3 of 4");
 
     await h.commands.get("plan:skip").handler("", h.ctx);
+    await flush();
 
-    const runs = h.sent.filter(
-      (item) => item.message?.customType === "pi-plan-execute",
-    );
-    expect(runs).toHaveLength(2);
-    const last = runs[1].message;
-    expect(last.content).toContain("Work on step 2 only:");
-    expect(last.details.steps[0].completed).toBe(true);
-    expect(last.details.steps[1].completed).toBe(false);
+    // The skipped step is done and the next batch already started.
+    expect(h.statuses["pi-plan"]).toContain("1/4");
+    expect(child.prompts[1]).toContain("steps 2-4 of 4");
+
+    child.resolve();
+    await executing;
+    expect(h.statuses["pi-plan"]).toBeUndefined();
   });
 
-  test("/plan:stop leaves the execution and keeps the plan for /plan:status", async () => {
-    const h = makeHarness();
+  test("stopping while a batch is in flight leaves every step open", async () => {
+    const child = pending();
+    const h = makeHarness({ run: child.run });
+    await h.emit("session_start", {}, h.ctx);
+    await h.commands.get("plan").handler("", h.ctx);
+    const executing = h.emit(
+      "agent_end",
+      { messages: [{ role: "assistant", content: [{ type: "text", text: planText }] }] },
+      h.ctx,
+    );
+    await flush();
+
+    await h.commands.get("plan:stop").handler("", h.ctx);
+    await executing;
+
+    expect(h.statuses["pi-plan"]).toBeUndefined();
+    const last = h.entries.filter((entry) => entry.customType === "pi-plan").at(-1);
+    expect(last.data.steps.every((step: any) => !step.completed)).toBe(true);
+  });
+
+  test("/plan:stop aborts the subagent in flight and keeps the plan", async () => {
+    const child = pending();
+    const h = makeHarness({ run: child.run });
     const notes: string[] = [];
     h.ctx.ui.notify = (text: string) => notes.push(text);
     await h.emit("session_start", {}, h.ctx);
     await h.commands.get("plan").handler("", h.ctx);
-    await h.emit(
+    const executing = h.emit(
       "agent_end",
       { messages: [{ role: "assistant", content: [{ type: "text", text: planText }] }] },
       h.ctx,
     );
+    await flush();
     expect(h.statuses["pi-plan"]).toContain("0/2");
 
     await h.commands.get("plan:stop").handler("", h.ctx);
+    await executing;
 
     // Execute is full access, so the mode is gone by its badge, not its tools.
     expect(h.statuses["pi-plan"]).toBeUndefined();
@@ -759,8 +675,17 @@ describe("plan extension", () => {
     expect(notes[0]).toContain("Fix the parser in src/planner.ts");
   });
 
-  test("/plan:retry resumes the open step from normal", async () => {
-    const h = makeHarness();
+  test("/plan:retry runs the open step again from normal", async () => {
+    const results: StepResult[] = [
+      { text: "", files: [], stopReason: "aborted", usedTools: true },
+      {
+        text: "[DONE:1] [DONE:2]",
+        files: [],
+        stopReason: "stop",
+        usedTools: false,
+      },
+    ];
+    const h = makeHarness({ run: async () => results.shift()! });
     await h.emit("session_start", {}, h.ctx);
     await h.commands.get("plan").handler("", h.ctx);
     await h.emit(
@@ -770,15 +695,18 @@ describe("plan extension", () => {
     );
     await h.commands.get("plan:stop").handler("", h.ctx);
 
-    const runs = () =>
-      h.sent.filter((item) => item.message?.customType === "pi-plan-execute");
-    const before = runs().length;
+    expect(h.statuses["pi-plan"]).toBeUndefined();
 
     await h.commands.get("plan:retry").handler("", h.ctx);
 
-    expect(h.statuses["pi-plan"]).toContain("0/2");
-    expect(runs()).toHaveLength(before + 1);
-    expect(runs().at(-1).message.content).toContain("Work on step 1 only:");
+    const complete = h.sent.find(
+      (item) => item.message?.customType === "pi-plan-complete",
+    );
+    expect(complete).toBeDefined();
+    expect(complete.message.details.steps.every((step: any) => step.completed)).toBe(
+      true,
+    );
+    expect(h.statuses["pi-plan"]).toBeUndefined();
   });
 
   test("/plan off and on set the mode instead of toggling blindly", async () => {
@@ -801,5 +729,141 @@ describe("plan extension", () => {
 
     await h.commands.get("plan").handler("off", h.ctx);
     expect(h.activeTools()).toContain("edit");
+  });
+
+  test("runs three steps per subagent and marks them together", async () => {
+    const child = pending();
+    const h = makeHarness({ run: child.run });
+    await h.emit("session_start", {}, h.ctx);
+    await h.commands.get("plan").handler("", h.ctx);
+    const executing = h.emit(
+      "agent_end",
+      { messages: [{ role: "assistant", content: [{ type: "text", text: fiveStepsText }] }] },
+      h.ctx,
+    );
+    await flush();
+
+    expect(child.prompts[0]).toContain("steps 1-3 of 5");
+
+    child.resolve();
+    await flush();
+
+    // The first batch is marked as a block and the next one follows.
+    expect(h.statuses["pi-plan"]).toContain("3/5");
+    expect(child.prompts[1]).toContain("steps 4-5 of 5");
+
+    child.resolve();
+    await executing;
+    expect(h.statuses["pi-plan"]).toBeUndefined();
+  });
+
+  test("runs batches in plan order and never overlaps them", async () => {
+    const child = pending();
+    const h = makeHarness({ run: child.run });
+    await h.emit("session_start", {}, h.ctx);
+    await h.commands.get("plan").handler("", h.ctx);
+    const executing = h.emit(
+      "agent_end",
+      { messages: [{ role: "assistant", content: [{ type: "text", text: fiveStepsText }] }] },
+      h.ctx,
+    );
+    await flush();
+
+    // Nothing starts while the previous batch is still running.
+    expect(child.prompts).toHaveLength(1);
+    expect(child.prompts[0]).toContain("1. First step.");
+
+    child.resolve();
+    await flush();
+
+    expect(child.prompts).toHaveLength(2);
+    expect(child.prompts[1]).toContain("4. Fourth step.");
+    expect(child.prompts[1]).not.toContain("3. Third step.");
+
+    const persisted = h.entries
+      .filter((entry) => entry.customType === "pi-plan")
+      .at(-1);
+    expect(persisted.data.steps.slice(0, 3).every((step: any) => step.completed)).toBe(
+      true,
+    );
+    expect(persisted.data.steps[3].completed).toBe(false);
+
+    child.resolve();
+    await executing;
+  });
+
+  test("a subagent that fails leaves its batch open", async () => {
+    const failing: StepResult[] = [
+      { text: "", files: [], stopReason: "error", usedTools: true },
+    ];
+    const h = makeHarness({ run: async () => failing.shift()! });
+    await h.emit("session_start", {}, h.ctx);
+    await h.commands.get("plan").handler("", h.ctx);
+    await h.emit(
+      "agent_end",
+      { messages: [{ role: "assistant", content: [{ type: "text", text: planText }] }] },
+      h.ctx,
+    );
+    expect(h.statuses["pi-plan"]).toContain("0/2");
+
+    // A runner that throws is reported instead of ticking anything.
+    const notes: { text: string; type?: string }[] = [];
+    const broken = makeHarness({
+      run: async () => {
+        throw new Error("no model");
+      },
+    });
+    broken.ctx.ui.notify = (text: string, type?: string) =>
+      notes.push({ text, type });
+    await broken.emit("session_start", {}, broken.ctx);
+    await broken.commands.get("plan").handler("", broken.ctx);
+    await broken.emit(
+      "agent_end",
+      { messages: [{ role: "assistant", content: [{ type: "text", text: planText }] }] },
+      broken.ctx,
+    );
+
+    expect(notes.at(-1)?.type).toBe("error");
+    expect(notes.at(-1)?.text).toContain("Subagent failed");
+    expect(broken.statuses["pi-plan"]).toContain("0/2");
+  });
+
+  test("/plan:batch sets how many steps one subagent runs", async () => {
+    const child = pending();
+    const h = makeHarness({ run: child.run });
+    const notes: string[] = [];
+    h.ctx.ui.notify = (text: string) => notes.push(text);
+    await h.emit("session_start", {}, h.ctx);
+    await h.commands.get("plan").handler("", h.ctx);
+
+    await h.commands.get("plan:batch").handler("2", h.ctx);
+    expect(notes.at(-1)).toContain("up to 2 steps");
+    const persisted = h.entries
+      .filter((entry) => entry.customType === "pi-plan")
+      .at(-1);
+    expect(persisted.data.batch).toBe(2);
+
+    await h.commands.get("plan:batch").handler("", h.ctx);
+    expect(notes.at(-1)).toContain("up to 2 steps");
+
+    const executing = h.emit(
+      "agent_end",
+      { messages: [{ role: "assistant", content: [{ type: "text", text: fiveStepsText }] }] },
+      h.ctx,
+    );
+    await flush();
+    expect(child.prompts[0]).toContain("steps 1-2 of 5");
+
+    child.resolve();
+    await flush();
+    expect(child.prompts[1]).toContain("steps 3-4 of 5");
+
+    child.resolve();
+    await flush();
+    expect(child.prompts[2]).toContain("step 5 of 5");
+
+    child.resolve();
+    await executing;
+    expect(h.statuses["pi-plan"]).toBeUndefined();
   });
 });

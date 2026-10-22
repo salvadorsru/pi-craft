@@ -10,9 +10,18 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { registerAsk } from "../../src/ask/index.js";
 import { createModes, type ModeRegistry } from "../../src/modes/index.js";
+import type { StepRunner } from "../../src/plan/agents.js";
 import { registerPlan } from "../../src/plan/index.js";
 
-export function createCraft(pi: ExtensionAPI): ModeRegistry {
+export interface CraftOptions {
+	/** Runs one batch of plan steps; tests inject a fake child. */
+	run?: StepRunner;
+}
+
+export function createCraft(
+	pi: ExtensionAPI,
+	options: CraftOptions = {},
+): ModeRegistry {
 	const modes = createModes(pi);
 
 	// Sessions from the separate pi-ask/pi-plan packages (and the short-lived
@@ -23,11 +32,14 @@ export function createCraft(pi: ExtensionAPI): ModeRegistry {
 	});
 
 	registerAsk(pi, modes);
-	registerPlan(pi, modes);
+	registerPlan(pi, modes, options);
 
 	return modes;
 }
 
-export default function craftExtension(pi: ExtensionAPI): void {
-	createCraft(pi);
+export default function craftExtension(
+	pi: ExtensionAPI,
+	options: CraftOptions = {},
+): void {
+	createCraft(pi, options);
 }

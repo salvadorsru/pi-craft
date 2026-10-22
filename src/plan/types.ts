@@ -17,4 +17,6 @@ export interface PlanState {
   startedAt?: number;
   /** Paths touched by edit/write while executing. */
   files?: string[];
+  /** Steps one subagent runs at once; defaults when absent. */
+  batch?: number;
 }

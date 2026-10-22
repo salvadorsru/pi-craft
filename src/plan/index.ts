@@ -25,10 +25,8 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import type { ModeRegistry } from "../modes/index.js";
 import { extractPlanSteps } from "./planner.js";
-import {
-  markCompletedSteps,
-  getCompletionStats,
-} from "./progress.js";
+import { createRunner, type StepRunner } from "./agents.js";
+import { markCompletedSteps, getCompletionStats } from "./progress.js";
 import {
   cardLines,
   statusText,
@@ -55,6 +53,8 @@ const PLAN_MODE_TOOLS = ["read", "bash", "grep", "find", "ls", ASK_QUESTION_TOOL
 // the last context message of every chained step run.
 const PLAN_CONTEXT_TYPE = "pi-plan-context";
 const PLAN_MARKER = "[PLAN MODE ACTIVE]";
+/** Steps one subagent runs at once when nothing was configured. */
+const DEFAULT_BATCH = 3;
 
 const PLAN_PROMPT = `${PLAN_MARKER}
 You are in plan mode — a read-only exploration mode for safe code analysis.
@@ -118,16 +118,21 @@ function linesComponent(lines: string[]): PlanComponent {
   };
 }
 
-export function registerPlan(pi: ExtensionAPI, modes: ModeRegistry): void {
+export function registerPlan(
+  pi: ExtensionAPI,
+  modes: ModeRegistry,
+  options: { run?: StepRunner } = {},
+): void {
   let steps: PlanStep[] = [];
   let startedAt: number | undefined;
   let filesTouched = new Set<string>();
-  // The step this run was started for. It stays set while the run streams so
-  // `agent_end` can tell the step that just ended from the next one.
-  let activeStep: number | undefined;
-  // Whether the current run actually touched a tool. A run that only asked a
-  // question must not tick a step off.
-  let runUsedTools = false;
+  // Consecutive steps one subagent runs: the plan order is the dependency
+  // order, so a batch never splits a step from the one it needs.
+  let batch = DEFAULT_BATCH;
+  // Set while a subagent is working, so /plan:stop can cut it short.
+  let running: AbortController | undefined;
+  // The step `/plan:skip` asked to drop from the batch in flight.
+  let skipped: number | undefined;
 
   // --- Mode state ---------------------------------------------------------
 
@@ -171,6 +176,7 @@ export function registerPlan(pi: ExtensionAPI, modes: ModeRegistry): void {
       steps,
       startedAt,
       files: [...filesTouched],
+      batch,
     } satisfies PlanState);
   }
 
@@ -178,8 +184,8 @@ export function registerPlan(pi: ExtensionAPI, modes: ModeRegistry): void {
     steps = [];
     startedAt = undefined;
     filesTouched = new Set();
-    activeStep = undefined;
-    runUsedTools = false;
+    running = undefined;
+    skipped = undefined;
   }
 
   /** The cursor is the first unfinished step, so it is persisted with `steps`. */
@@ -187,36 +193,34 @@ export function registerPlan(pi: ExtensionAPI, modes: ModeRegistry): void {
     return steps.find((step) => !step.completed);
   }
 
-  function stepContext(step: PlanStep): string {
+  /** The next `batch` unfinished steps, in plan order. */
+  function nextBatch(): PlanStep[] {
+    return steps.filter((step) => !step.completed).slice(0, batch);
+  }
+
+  function stepContext(batchSteps: PlanStep[]): string {
     const remaining = steps.filter((s) => !s.completed);
     const todoList = remaining.map((s) => `${s.step}. ${s.text}`).join("\n");
-    return `[EXECUTING PLAN — step ${step.step} of ${steps.length}]
+    const work = batchSteps.map((s) => `${s.step}. ${s.text}`).join("\n");
+    const first = batchSteps[0].step;
+    const last = batchSteps[batchSteps.length - 1].step;
+    const range =
+      first === last
+        ? `step ${first} of ${steps.length}`
+        : `steps ${first}-${last} of ${steps.length}`;
+    const markers = batchSteps.map((s) => `[DONE:${s.step}]`).join(" ");
+    return `[EXECUTING PLAN — ${range}]
 
 Remaining steps:
 ${todoList}
 
-Work on step ${step.step} only:
-${step.text}
+Work on these steps only, in order:
+${work}
 
-Do not start another step. Stop as soon as this one is done: the next step
-starts when this run ends. If the step needs no tool calls, include
-[DONE:${step.step}] in your reply.`;
-  }
-
-  function lastAssistantMessage(messages: readonly unknown[]):
-    | { role: string; content?: unknown; stopReason?: string }
-    | undefined {
-    return [...messages].reverse().find(
-      (m) => (m as { role?: string } | null)?.role === "assistant",
-    ) as { role: string; content?: unknown; stopReason?: string } | undefined;
-  }
-
-  function messageText(message: { role?: string; content?: unknown }): string {
-    if (message.role !== "assistant" || !Array.isArray(message.content)) return "";
-    return (message.content as Array<{ type: string; text?: string }>)
-      .filter((c): c is { type: "text"; text: string } => c.type === "text")
-      .map((c) => c.text)
-      .join("\n");
+Do not start any other step. Stop as soon as the batch is done: the next batch
+starts when this run ends. Include ${markers} in your reply for each step you
+finish, and include the marker alone when a step needs no tool calls. If a step
+needs a decision you cannot take, stop and say what you need.`;
   }
 
   function updateUI(ctx: ExtensionContext): void {
@@ -275,30 +279,85 @@ starts when this run ends. If the step needs no tool calls, include
     }));
   }
 
-  /** Start the run for the first unfinished step. */
-  function beginStep(ctx: ExtensionContext): void {
-    const step = currentStep();
-    if (!step) {
-      finishPlan(ctx);
-      return;
-    }
-    activeStep = step.step;
-    runUsedTools = false;
-    updateUI(ctx);
-    persistState();
+  /** Run the plan batch by batch until it ends, stops or fails. */
+  async function beginStep(ctx: ExtensionContext): Promise<void> {
+    while (modes.is("execute")) {
+      const batchSteps = nextBatch();
+      if (batchSteps.length === 0) {
+        finishPlan(ctx);
+        return;
+      }
 
-    pi.sendMessage(
-      {
-        customType: "pi-plan-execute",
-        content: stepContext(step),
-        display: true,
-        details: {
-          steps: steps.map((s) => ({ ...s })),
-          startedAt,
-        } satisfies PlanCardDetails,
-      },
-      { triggerTurn: true },
-    );
+      updateUI(ctx);
+      persistState();
+
+      const prompt = stepContext(batchSteps);
+      pi.sendMessage(
+        {
+          customType: "pi-plan-execute",
+          content: prompt,
+          display: true,
+          details: {
+            steps: steps.map((s) => ({ ...s })),
+            startedAt,
+          } satisfies PlanCardDetails,
+        },
+        { triggerTurn: false },
+      );
+
+      const controller = new AbortController();
+      running = controller;
+
+      let result;
+      try {
+        const run = options.run ?? createRunner(ctx.cwd);
+        result = await run(prompt, controller.signal);
+      } catch (error) {
+        running = undefined;
+        ctx.ui.notify(
+          `Subagent failed: ${error instanceof Error ? error.message : String(error)}`,
+          "error",
+        );
+        updateUI(ctx);
+        persistState();
+        return;
+      }
+      running = undefined;
+
+      // /plan:stop left the mode while this batch was in flight: report
+      // nothing, the steps must stay where they were.
+      if (!modes.is("execute")) return;
+
+      const skip = skipped;
+      skipped = undefined;
+      if (skip !== undefined) {
+        const step = steps.find((s) => s.step === skip);
+        if (step) step.completed = true;
+        updateUI(ctx);
+        persistState();
+        continue;
+      }
+
+      for (const file of result.files) filesTouched.add(file);
+
+      const marked = markCompletedSteps(result.text, steps);
+      const cut =
+        result.stopReason === "aborted" ||
+        result.stopReason === "error" ||
+        result.stopReason === "length";
+
+      // A batch that did nothing leaves its steps open: /plan:retry can pick
+      // them up instead of hiding work that never happened.
+      if (cut || (!result.usedTools && marked === 0)) {
+        updateUI(ctx);
+        persistState();
+        return;
+      }
+
+      for (const step of batchSteps) step.completed = true;
+      updateUI(ctx);
+      persistState();
+    }
   }
 
   /** Every step is done: show the final card and leave execute mode. */
@@ -515,6 +574,26 @@ starts when this run ends. If the step needs no tool calls, include
     },
   });
 
+  pi.registerCommand("plan:batch", {
+    description: `Steps one subagent runs at once (default ${DEFAULT_BATCH})`,
+    handler: async (args, ctx) => {
+      const size = Number.parseInt(args.trim(), 10);
+      if (!Number.isInteger(size) || size < 1) {
+        ctx.ui.notify(
+          `Each subagent runs up to ${batch} step${batch === 1 ? "" : "s"}. Use /plan:batch <n> to change it.`,
+          "info",
+        );
+        return;
+      }
+      batch = size;
+      persistState();
+      ctx.ui.notify(
+        `Each subagent now runs up to ${batch} step${batch === 1 ? "" : "s"}.`,
+        "info",
+      );
+    },
+  });
+
   pi.registerCommand("plan:status", {
     description: "Show current plan and progress",
     handler: async (_args, ctx) => {
@@ -534,7 +613,7 @@ starts when this run ends. If the step needs no tool calls, include
   });
 
   pi.registerCommand("plan:skip", {
-    description: "Mark the current step done and start the next one",
+    description: "Mark the current step done and move on",
     handler: async (_args, ctx) => {
       if (!modes.is("execute")) {
         ctx.ui.notify("No step is running.", "info");
@@ -545,12 +624,17 @@ starts when this run ends. If the step needs no tool calls, include
         finishPlan(ctx);
         return;
       }
+      // The batch in flight belongs to one subagent: aborting it and marking
+      // only this step is the closest thing to skipping one task.
+      if (running) {
+        skipped = step.step;
+        running.abort();
+        return;
+      }
       step.completed = true;
       persistState();
       updateUI(ctx);
-      const next = currentStep();
-      if (next) beginStep(ctx);
-      else finishPlan(ctx);
+      await beginStep(ctx);
     },
   });
 
@@ -562,6 +646,8 @@ starts when this run ends. If the step needs no tool calls, include
         ctx.ui.notify("No step is running.", "info");
         return;
       }
+      running?.abort();
+      skipped = undefined;
       modes.leave(ctx);
       // Leaving keeps `steps` in memory, so persist them under `normal`:
       // `/plan:status` still shows the plan and `/plan:retry` resumes it.
@@ -584,9 +670,13 @@ starts when this run ends. If the step needs no tool calls, include
         ctx.ui.notify("Every step is done.", "info");
         return;
       }
+      if (running) {
+        ctx.ui.notify("A subagent is working on the plan.", "info");
+        return;
+      }
       // A step left open by an aborted or failed run has no other way back.
       if (!modes.is("execute")) modes.enter("execute", ctx);
-      beginStep(ctx);
+      await beginStep(ctx);
     },
   });
 
@@ -597,99 +687,9 @@ starts when this run ends. If the step needs no tool calls, include
     handler: async (ctx) => togglePlanMode(ctx),
   });
 
-  // --- Tool call filter (and file tracking while executing) ---
-
-  pi.on("tool_call", async (event) => {
-    if (modes.is("execute")) {
-      // Asking the user is not work on the step: the run must stay open so the
-      // answer can arrive before the step is ticked off.
-      if (event.toolName !== ASK_QUESTION_TOOL) runUsedTools = true;
-      // Used by the final card: what the plan actually touched.
-      if (event.toolName === "edit" || event.toolName === "write") {
-        const path = (event.input as { path?: unknown } | undefined)?.path;
-        if (typeof path === "string" && path.length > 0) filesTouched.add(path);
-      }
-      return;
-    }
-  });
-
-  // --- One run per step: reset the per-run signal at the start of each run ---
-
-  pi.on("agent_start", async () => {
-    runUsedTools = false;
-    if (modes.is("execute") && activeStep === undefined) {
-      activeStep = currentStep()?.step;
-    }
-  });
-
-  // --- Track progress while the assistant is still writing ---
-
-  pi.on("message_update", async (event, ctx) => {
-    if (!modes.is("execute") || steps.length === 0) return;
-    const text = messageText(event.message);
-    if (markCompletedSteps(text, steps) > 0) {
-      updateUI(ctx);
-      persistState();
-    }
-  });
-
-  // --- Track progress during execution (final pass for each turn) ---
-
-  pi.on("turn_end", async (event, ctx) => {
-    if (!modes.is("execute") || steps.length === 0) return;
-    if (markCompletedSteps(messageText(event.message), steps) > 0) {
-      updateUI(ctx);
-      persistState();
-    }
-  });
-
-  // --- After agent finishes: extract plan or check completion ---
+  // --- After agent finishes: extract the plan ---
 
   pi.on("agent_end", async (event, ctx) => {
-    // Execution: the run that just ended belongs to one step. Advance it and
-    // start the next one, so the checklist moves while the plan is running.
-    if (modes.is("execute") && steps.length > 0) {
-      const last = lastAssistantMessage(event.messages);
-      // A run that was cut off (aborted, error, output limit) leaves the step
-      // open: advancing would hide the work that never happened.
-      if (
-        last?.stopReason === "aborted" ||
-        last?.stopReason === "error" ||
-        last?.stopReason === "length"
-      ) {
-        updateUI(ctx);
-        persistState();
-        return;
-      }
-
-      const step =
-        (activeStep !== undefined
-          ? steps.find((s) => s.step === activeStep)
-          : undefined) ?? currentStep();
-      if (!step) {
-        finishPlan(ctx);
-        return;
-      }
-
-      if (!step.completed) {
-        // No tool call and no [DONE:n]: the model replied without working on
-        // the step (a question, a refusal). Keep it open.
-        if (!runUsedTools) {
-          updateUI(ctx);
-          persistState();
-          return;
-        }
-        step.completed = true;
-        updateUI(ctx);
-        persistState();
-      }
-
-      const next = currentStep();
-      if (next) beginStep(ctx);
-      else finishPlan(ctx);
-      return;
-    }
-
     if (!modes.is("plan") || !ctx.hasUI) return;
 
     // Extract todos from last assistant message
@@ -744,14 +744,13 @@ starts when this run ends. If the step needs no tool calls, include
     if (choice === "Execute the plan") {
       startedAt = Date.now();
       filesTouched = new Set();
-      activeStep = undefined;
       modes.enter("execute", ctx);
       persistState();
       updateUI(ctx);
 
-      // One run per step. The first run starts here; `agent_end` starts the
-      // next one, so the widget ticks between steps instead of at the end.
-      beginStep(ctx);
+      // One batch at a time: the plan runs to the end, and each batch repaints
+      // the checklist, so progress shows up between batches.
+      await beginStep(ctx);
     } else if (choice === "Refine the plan") {
       const refinement = await ctx.ui.editor("Refine the plan:", "");
       if (refinement?.trim()) {
@@ -781,54 +780,17 @@ starts when this run ends. If the step needs no tool calls, include
           steps = data.steps ?? steps;
           startedAt = data.startedAt;
           filesTouched = new Set(data.files ?? []);
+          if (data.batch) batch = data.batch;
         }
       }
     }
 
-    // On resume in execute mode: rebuild completion from messages after last execute marker
-    if (modes.is("execute") && steps.length > 0) {
-      const branch = ctx.sessionManager.getBranch() as Array<{
-        type: string;
-        customType?: string;
-        data?: PlanState;
-        message?: { role: string; content?: unknown };
-      }>;
-      let executeIndex = -1;
-      for (let i = branch.length - 1; i >= 0; i--) {
-        if (
-          branch[i].type === "custom" &&
-          branch[i].customType === "pi-plan" &&
-          branch[i].data?.mode === "execute"
-        ) {
-          executeIndex = i;
-          break;
-        }
-      }
-
-      const relevantEntries = branch.slice(executeIndex + 1);
-      const allText = relevantEntries
-        .filter(
-          (e) =>
-            e.type === "message" &&
-            e.message?.role === "assistant" &&
-            Array.isArray(e.message?.content)
-        )
-        .flatMap((e) =>
-          (e.message!.content as Array<{ type: string; text?: string }>)
-            .filter((c) => c.type === "text")
-            .map((c) => c.text!)
-        )
-        .join("\n");
-
-      markCompletedSteps(allText, steps);
-      activeStep = currentStep()?.step;
-
-      // The process died after the last step but before the final card was
-      // posted: close the plan now instead of leaving it stuck on 2/2.
-      if (activeStep === undefined) {
-        finishPlan(ctx);
-        return;
-      }
+    // On resume in execute mode: the completed steps are already in the
+    // persisted entry. Only a plan whose last batch died before the final card
+    // needs closing here.
+    if (modes.is("execute") && steps.length > 0 && !currentStep()) {
+      finishPlan(ctx);
+      return;
     }
 
     updateUI(ctx);

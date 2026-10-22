@@ -41,7 +41,8 @@ is migrated from their session entries.
 | `/plan` | Toggle plan mode |
 | `/plan on` · `/plan off` · `/plan status` | Control plan mode explicitly |
 | `/plan:status` | Show the current plan and its progress |
-| `/plan:skip` · `/plan:stop` · `/plan:retry` | Skip the current step, stop the run, retry the open step |
+| `/plan:batch <n>` | Steps one subagent runs at once (default 3) |
+| `/plan:skip` · `/plan:stop` · `/plan:retry` | Drop the step in flight, stop the run, retry the open step |
 | `Ctrl+Alt+P` · `--plan` | Shortcut and startup flag |
 
 ## Skills and prompts
@@ -93,8 +94,8 @@ checklist and asks what to do: **Execute the plan**, **Stay in plan mode** or
 
 When the plan needs a decision, the agent calls `ask_question` instead of ending
 its turn with a question in prose: a selector with short options and a free-text
-answer. The same tool is available while executing, so a step can resolve a
-detail without leaving the plan.
+answer. Asking works in plan mode; the subagents that execute the plan have no
+UI (see [Execute](#execute)).
 
 ```
 Plan  ######------------  1/3 · 33%
@@ -105,15 +106,26 @@ Plan  ######------------  1/3 · 33%
 
 ### Execute
 
-One step per agent run: the checklist advances between runs, so progress shows
-up during the work rather than at the end. A step that needs no tool call
-declares `[DONE:n]`. When the last step ends, the card repeats the whole list
-with the duration and, expanded, the files that changed.
+Each batch of steps runs in its own subagent session, in plan order: the plan
+order is the dependency order, so a step never starts before the one it needs. A
+batch is up to three steps (`/plan:batch <n>` changes it) and the checklist is
+repainted when the batch ends.
 
-A step can get stuck — a command that keeps failing, or a run cut off by
-`aborted`/`error`, which leaves the step open. `/plan:skip` marks it done and
-starts the next one, `/plan:retry` runs it again, and `/plan:stop` leaves the
-execution without losing the list, so `/plan:status` can still show it.
+A step that needs no tool call declares `[DONE:n]`. A batch that reported no
+marker and used no tool leaves its steps open, so `/plan:retry` can pick them
+up. When the last step ends, the card repeats the whole list with the duration
+and, expanded, the files the subagents changed.
+
+Two things change because the work leaves the main session:
+
+- The subagent has no UI, so `ask_question` is not available while executing. A
+  step that needs a decision stops and says what it needs; answer it in plan
+  mode, or refine the plan.
+- `Esc` no longer aborts the step: there is no parent turn to interrupt. Use
+  `/plan:stop`, which aborts the subagent in flight and leaves the list intact
+  so `/plan:status` can still show it.
+
+`/plan:skip` drops the step in flight and restarts the batch without it.
 
 ## What the modes block
 
@@ -137,6 +149,7 @@ extensions/craft/index.ts   wires the modes and the legacy entries
 src/modes/                  mode state, tool ownership, guard, bash allowlist
 src/ask/                    ask mode: commands, badge, instructions
 src/plan/                   plan mode: parser, progress, cards, questions
+src/plan/agents.ts          the subagent that runs one batch of steps
 skills/                     commit and pr, one directory each
 prompts/                    pack, which stages everything and calls commit
 ```
