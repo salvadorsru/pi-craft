@@ -290,12 +290,27 @@ needs a decision you cannot take, stop and say what you need.`;
 
   /** Run the plan batch by batch until it ends, stops or fails. */
   async function beginStep(ctx: ExtensionContext): Promise<void> {
+    // Guards against an executor that keeps handing us the same open batch
+    // without ever ticking a step: stop with a real error instead of looping.
+    const seen = new Set<string>();
     while (modes.is("execute")) {
       const batchSteps = nextBatch();
       if (batchSteps.length === 0) {
         finishPlan(ctx);
         return;
       }
+      const signature = batchSteps.map((s) => s.step).join(",");
+      if (seen.has(signature)) {
+        ctx.ui.notify(
+          `Plan execution made no progress on steps ${signature}; stopping.`,
+          "error",
+        );
+        modes.leave(ctx);
+        persistState();
+        updateUI(ctx);
+        return;
+      }
+      seen.add(signature);
 
       updateUI(ctx);
       persistState();
