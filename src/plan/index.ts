@@ -771,6 +771,33 @@ needs a decision you cannot take, stop and say what you need.`;
     handler: async (ctx) => togglePlanMode(ctx),
   });
 
+  // --- Track progress from agent markers ---
+
+  pi.on("turn_end", async (event, ctx) => {
+    if (!modes.is("execute") || steps.length === 0) return;
+    const message = (event as { message?: unknown }).message as
+      | { role?: string; content?: unknown }
+      | undefined;
+    if (!message || message.role !== "assistant") return;
+    const content = message.content;
+    const text =
+      typeof content === "string"
+        ? content
+        : Array.isArray(content)
+          ? content
+              .map((block) =>
+                (block as { type?: string; text?: string })?.type === "text"
+                  ? ((block as { text?: string }).text ?? "")
+                  : "",
+              )
+              .join("\n")
+          : "";
+    if (markCompletedSteps(text, steps) > 0) {
+      updateUI(ctx);
+      persistState();
+    }
+  });
+
   // --- After agent finishes: extract the plan ---
 
   pi.on("agent_end", async (event, ctx) => {

@@ -31,6 +31,12 @@ describe("markCompletedSteps", () => {
     expect(markCompletedSteps("[DONE:1]", list)).toBe(0);
   });
 
+  test("invalid and duplicate markers do not corrupt state", () => {
+    const list = steps("one", "two");
+    expect(markCompletedSteps("[DONE:0] [DONE:1] [DONE:1] [DONE:99]", list)).toBe(1);
+    expect(list.map((step) => step.completed)).toEqual([true, false]);
+  });
+
   test("a marker for a step nobody planned changes nothing", () => {
     const list = steps("one");
     expect(markCompletedSteps("[DONE:9]", list)).toBe(0);
