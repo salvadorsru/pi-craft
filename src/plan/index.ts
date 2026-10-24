@@ -360,6 +360,15 @@ needs a decision you cannot take, stop and say what you need.`;
         return;
       }
 
+      // Models often finish a batch without emitting [DONE:n] markers. Treat a
+      // successful run as completing the batch instead of leaving it stuck.
+      if (marked === 0) {
+        for (const step of batchSteps) {
+          const item = steps.find((s) => s.step === step.step);
+          if (item) item.completed = true;
+        }
+      }
+
       for (const step of batchSteps) step.completed = true;
       updateUI(ctx);
       persistState();

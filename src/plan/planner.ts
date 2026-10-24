@@ -62,7 +62,7 @@ export function extractPlanSteps(message: string): PlanStep[] {
 
   // "Plan", "## Plan:", "**Plan:**", "Plan: with a title" — but not "Planning".
   const headerMatch = message.match(
-    /(?:^|\n)[ \t]*(?:#{1,6}[ \t]+)?\*{0,2}Plan\*{0,2}[ \t]*(?:[:：][^\n]*)?\n/i,
+    /(?:^|\n)[ \t]*(?:#{1,6}[ \t]+)?\*{0,2}Plan(?:\s+[A-Za-z]+)*\*{0,2}[ \t]*(?:[:：][^\n]*)?\n/i,
   );
   if (!headerMatch) return items;
 
