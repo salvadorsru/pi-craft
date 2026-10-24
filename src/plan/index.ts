@@ -854,16 +854,23 @@ needs a decision you cannot take, stop and say what you need.`;
       "Refine the plan",
     ]);
 
-    if (choice === "Execute the plan") {
+    if (choice?.startsWith("Execute")) {
       startedAt = Date.now();
       filesTouched = new Set();
-      modes.enter("execute", ctx);
-      persistState();
-      updateUI(ctx);
+      try {
+        modes.enter("execute", ctx);
+        persistState();
+        updateUI(ctx);
 
-      // One batch at a time: the plan runs to the end, and each batch repaints
-      // the checklist, so progress shows up between batches.
-      await beginStep(ctx);
+        // One batch at a time: the plan runs to the end, and each batch repaints
+        // the checklist, so progress shows up between batches.
+        await beginStep(ctx);
+      } catch (error) {
+        ctx.ui.notify(
+          `Could not start plan execution: ${error instanceof Error ? error.message : String(error)}`,
+          "error",
+        );
+      }
     } else if (choice === "Refine the plan") {
       const refinement = await ctx.ui.editor("Refine the plan:", "");
       if (refinement?.trim()) {
