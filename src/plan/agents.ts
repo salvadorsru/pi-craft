@@ -15,17 +15,21 @@ export interface StepResult {
   text: string;
   files: string[];
   stopReason?: string;
+  /** The last assistant error, e.g. "429: …" for a rate-limited call. */
+  errorMessage?: string;
   usedTools: boolean;
 }
 
 /** Runs one batch of steps and reports what the child did. */
 export type StepRunner = (prompt: string, signal?: AbortSignal) => Promise<StepResult>;
 
-function stopReasonOf(messages: readonly unknown[]): string | undefined {
+function lastAssistantOf(
+  messages: readonly unknown[],
+): { stopReason?: string; errorMessage?: string } | undefined {
   const last = [...messages].reverse().find(
     (message) => (message as { role?: string } | null)?.role === "assistant",
   );
-  return (last as { stopReason?: string } | undefined)?.stopReason;
+  return last as { stopReason?: string; errorMessage?: string } | undefined;
 }
 
 /** Asking the parent is not work: only real tools count as progress. */
@@ -65,16 +69,19 @@ export function createRunner(cwd: string): StepRunner {
 
     let text = "";
     let stopReason: string | undefined;
+    let errorMessage: string | undefined;
     try {
       await session.prompt(prompt);
       text = session.getLastAssistantText() ?? "";
-      stopReason = stopReasonOf(session.messages);
+      const last = lastAssistantOf(session.messages);
+      stopReason = last?.stopReason;
+      errorMessage = last?.errorMessage;
     } finally {
       signal?.removeEventListener("abort", abort);
       unsubscribe();
       session.dispose();
     }
 
-    return { text, files: [...files].sort(), stopReason, usedTools };
+    return { text, files: [...files].sort(), stopReason, errorMessage, usedTools };
   };
 }

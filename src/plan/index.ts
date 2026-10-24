@@ -355,6 +355,18 @@ needs a decision you cannot take, stop and say what you need.`;
       // A batch that did nothing leaves its steps open: /plan:retry can pick
       // them up instead of hiding work that never happened.
       if (cut || (!result.usedTools && marked === 0)) {
+        const reason =
+          result.stopReason === "aborted"
+            ? "was aborted"
+            : result.stopReason === "length"
+              ? "hit its token limit"
+              : result.stopReason === "error"
+                ? `failed: ${result.errorMessage ?? "model error"}`
+                : "made no tool calls and finished no steps";
+        ctx.ui.notify(
+          `Plan paused at step ${batchSteps[0].step}: the subagent ${reason}. /plan:retry resumes from there.`,
+          result.stopReason === "aborted" ? "info" : "error",
+        );
         updateUI(ctx);
         persistState();
         return;

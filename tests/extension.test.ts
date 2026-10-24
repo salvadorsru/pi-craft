@@ -828,6 +828,85 @@ describe("plan extension", () => {
     expect(broken.statuses["pi-plan"]).toContain("0/2");
   });
 
+  test("a model error pauses the plan with a report and the user's error", async () => {
+    // A failed model call does not throw: the runner resolves with
+    // stopReason "error" and the cause has to reach the user, not disappear.
+    const notes: { text: string; type?: string }[] = [];
+    const h = makeHarness({
+      run: async () => ({
+        text: "",
+        files: [],
+        stopReason: "error",
+        errorMessage: '429: {"type":"GoUsageLimitError","message":"Go usage limit exceeded"}',
+        usedTools: false,
+      }),
+    });
+    h.ctx.ui.notify = (text: string, type?: string) => notes.push({ text, type });
+    await h.emit("session_start", {}, h.ctx);
+    await h.commands.get("plan").handler("", h.ctx);
+    await h.emit(
+      "agent_end",
+      { messages: [{ role: "assistant", content: [{ type: "text", text: planText }] }] },
+      h.ctx,
+    );
+
+    expect(notes.at(-1)?.type).toBe("error");
+    expect(notes.at(-1)?.text).toContain("step 1");
+    expect(notes.at(-1)?.text).toContain("429:");
+    expect(notes.at(-1)?.text).toContain("/plan:retry");
+    expect(h.statuses["pi-plan"]).toContain("0/2");
+    expect(h.sent.some((item) => item.message?.customType === "pi-plan-complete")).toBe(
+      false,
+    );
+
+    // The paused plan is resumable from the same open steps.
+    const after = makeHarness({ run: async () => ({
+      text: "[DONE:1] [DONE:2]",
+      files: [],
+      stopReason: "stop",
+      usedTools: false,
+    }) });
+    after.ctx.sessionManager.getBranch = () =>
+      h.entries
+        .filter((entry) => entry.customType === "pi-plan")
+        .map((entry) => ({ type: "custom", customType: "pi-plan", data: entry.data }));
+    await after.emit("session_start", {}, after.ctx);
+    await after.commands.get("plan:retry").handler("", after.ctx);
+
+    const complete = after.sent.find(
+      (item) => item.message?.customType === "pi-plan-complete",
+    );
+    expect(complete).toBeDefined();
+  });
+
+  test("a subagent that only replies pauses the plan with a report", async () => {
+    const notes: { text: string; type?: string }[] = [];
+    const h = makeHarness({
+      run: async () => ({
+        text: "Which file should I start with?",
+        files: [],
+        stopReason: "stop",
+        usedTools: false,
+      }),
+    });
+    h.ctx.ui.notify = (text: string, type?: string) => notes.push({ text, type });
+    await h.emit("session_start", {}, h.ctx);
+    await h.commands.get("plan").handler("", h.ctx);
+    await h.emit(
+      "agent_end",
+      { messages: [{ role: "assistant", content: [{ type: "text", text: planText }] }] },
+      h.ctx,
+    );
+
+    expect(notes.at(-1)?.type).toBe("error");
+    expect(notes.at(-1)?.text).toContain("paused at step 1");
+    expect(notes.at(-1)?.text).toContain("/plan:retry");
+    expect(h.statuses["pi-plan"]).toContain("0/2");
+    expect(
+      h.sent.filter((item) => item.message?.customType === "pi-plan-execute"),
+    ).toHaveLength(1);
+  });
+
   test("/plan:batch sets how many steps one subagent runs", async () => {
     const child = pending();
     const h = makeHarness({ run: child.run });
