@@ -187,6 +187,9 @@ export function registerPlan(
   }
 
   function resetExecution(): void {
+    // A batch still in flight must be stopped, or it keeps working — with
+    // full tool access — after its state is gone.
+    running?.abort();
     steps = [];
     startedAt = undefined;
     filesTouched = new Set();

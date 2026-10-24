@@ -907,6 +907,36 @@ describe("plan extension", () => {
     ).toHaveLength(1);
   });
 
+  test("toggling plan mode off aborts a batch still in flight", async () => {
+    // The subagent runs with full tool access: leaving the execution without
+    // stopping it would leave the child working with no state and no owner.
+    let abortSignal: AbortSignal | undefined;
+    const child: StepRunner = (_prompt, signal) => {
+      abortSignal = signal;
+      return new Promise<StepResult>((resolve) => {
+        signal?.addEventListener(
+          "abort",
+          () => resolve({ text: "", files: [], stopReason: "aborted", usedTools: true }),
+          { once: true },
+        );
+      });
+    };
+    const h = makeHarness({ run: child });
+    await h.emit("session_start", {}, h.ctx);
+    await h.commands.get("plan").handler("", h.ctx);
+    const executing = h.emit(
+      "agent_end",
+      { messages: [{ role: "assistant", content: [{ type: "text", text: planText }] }] },
+      h.ctx,
+    );
+    await flush();
+
+    expect(abortSignal?.aborted).toBe(false);
+    await h.commands.get("plan").handler("", h.ctx);
+    expect(abortSignal?.aborted).toBe(true);
+    await executing;
+  });
+
   test("/plan:batch sets how many steps one subagent runs", async () => {
     const child = pending();
     const h = makeHarness({ run: child.run });
