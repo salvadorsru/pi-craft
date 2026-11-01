@@ -1,5 +1,37 @@
 # Changelog
 
+## 1.4.0
+
+- In execute mode the parent agent can do step work itself: the `[DONE:n]`
+  markers in its own reply close those steps as the turn ends, so work done
+  outside the batch runner is not stuck open. Invalid and duplicated markers
+  cannot corrupt the count.
+- A batch closes only the steps the subagent actually finished, instead of
+  marking the whole block done, so unfinished work is not silently skipped.
+- A failed model call (a 429, a cut-off token limit, an empty run) pauses the
+  plan with the step, the reason and `/plan:retry` as the way back, instead of
+  freezing the checklist with nothing in the transcript.
+- A subagent that hands the same open batch back twice stops with an error
+  instead of looping forever.
+- Leaving execute mode for another mode aborts the subagent in flight, so a
+  batch can no longer keep working in the background with full tool access,
+  unreachable by `/plan:stop`.
+- `/plan off` really leaves execute mode instead of claiming it was already off,
+  and switching to plan mode while a plan runs asks first.
+- A plan header with extra words (`Plan: move the tests`, `## Plan for the
+  tests`) is read in full, and a refinement that ends in a question keeps the
+  current plan instead of clearing it for good.
+- Only the live batch instruction stays in context: older "work on steps 1-3"
+  texts no longer mislead a later turn.
+- `ask_question` with several questions puts the finishing choice first, so
+  Enter cannot repeat the same question, and dismissing a later round keeps the
+  answers already picked.
+- `turn_end` no longer fails with "could not resolve the persisted assistant
+  entry ID" for a turn started by `/ask <question>` outside plan mode.
+- The "what next?" dialog lists **Stay in plan mode** first, so a plain Enter
+  never starts the execution by accident, and a failure while starting the
+  execution reaches the user instead of vanishing into the event handler.
+
 ## 1.3.0
 
 - A re-stated plan keeps the ticks of the steps it repeats: replacing the list no
