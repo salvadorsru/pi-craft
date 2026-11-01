@@ -553,7 +553,7 @@ describe("plan extension", () => {
       cancelled: true,
     });
     expect(result.content[0].text).toContain("dismissed");
-    expect(result.content[0].text).toContain("Do not assume an answer");
+    expect(result.content[0].text).toContain("Do not ask it again");
   });
 
   test("ask_question falls back to plain text when there is no UI", async () => {

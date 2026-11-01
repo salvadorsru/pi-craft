@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import {
+  DONE_OPTION,
+  MORE_OPTION,
+  MORE_TITLE,
   OTHER_OPTION,
   answerText,
   askQuestion,
@@ -17,7 +20,6 @@ function fakeUI(overrides: Partial<QuestionUI> = {}): QuestionUI {
   return {
     select: async () => undefined,
     input: async () => undefined,
-    confirm: async () => false,
     ...overrides,
   };
 }
@@ -66,11 +68,11 @@ describe("askQuestion", () => {
 
   test("collects several answers when multiple is set", async () => {
     const picks = ["Postgres", "Redis"];
-    const confirms = [true, false];
+    const rounds = [MORE_OPTION, DONE_OPTION];
     const answer = await askQuestion(
       fakeUI({
-        select: async () => picks.shift(),
-        confirm: async () => confirms.shift() ?? false,
+        select: async (title) =>
+          title === MORE_TITLE ? rounds.shift() : picks.shift(),
       }),
       {
         question: "Which services?",
@@ -84,16 +86,53 @@ describe("askQuestion", () => {
 
   test("does not add a repeated option twice", async () => {
     const picks = ["Postgres", "Postgres"];
-    const confirms = [true, false];
+    const rounds = [MORE_OPTION, DONE_OPTION];
     const answer = await askQuestion(
       fakeUI({
-        select: async () => picks.shift(),
-        confirm: async () => confirms.shift() ?? false,
+        select: async (title) =>
+          title === MORE_TITLE ? rounds.shift() : picks.shift(),
       }),
       { question: "Which?", options: ["Postgres"], multiple: true },
     );
 
     expect(answer.answer).toBe("Postgres");
+  });
+
+  /// The reported loop: Enter on the dialog that follows an answer must finish,
+  /// not ask the same question again.
+  test("the finishing choice comes first after an answer", async () => {
+    let seen: string[] = [];
+    const answer = await askQuestion(
+      fakeUI({
+        select: async (title, options) => {
+          if (title !== MORE_TITLE) return "Postgres";
+          seen = options;
+          return DONE_OPTION;
+        },
+      }),
+      { question: "Which?", options: ["Postgres"], multiple: true },
+    );
+
+    expect(seen[0]).toBe(DONE_OPTION);
+    expect(answer).toEqual({
+      question: "Which?",
+      answer: "Postgres",
+      cancelled: false,
+    });
+  });
+
+  test("dismissing a later round keeps the answers already given", async () => {
+    const picks = ["Postgres", MORE_OPTION, undefined];
+    const answer = await askQuestion(
+      fakeUI({ select: async () => picks.shift() }),
+      { question: "Which?", options: ["Postgres"], multiple: true },
+    );
+
+    expect(answer).toEqual({
+      question: "Which?",
+      answer: "Postgres",
+      cancelled: false,
+    });
   });
 
   test("treats a dismissed selector or empty custom answer as cancelled", async () => {
@@ -137,7 +176,7 @@ describe("question rendering", () => {
   test("never presents a dismissal as an answer", () => {
     const text = answerText({ question: "Which?", cancelled: true });
     expect(text).toContain("dismissed");
-    expect(text).toContain("Do not assume an answer");
+    expect(text).toContain("Do not ask it again");
   });
 
   test("shows the answer and repeats the question when expanded", () => {

@@ -16,6 +16,15 @@ export const ASK_QUESTION_TOOL = "ask_question";
 /** Always appended to the suggestions, unless the caller opts out. */
 export const OTHER_OPTION = "Other — write my own answer";
 
+/** The choice that ends the multi-answer loop, first so Enter finishes. */
+export const DONE_OPTION = "Done — use these answers";
+
+/** The choice that asks the same question again. */
+export const MORE_OPTION = "Add another answer";
+
+/** The title of the selector that follows a pick when `multiple` is set. */
+export const MORE_TITLE = "Add another answer?";
+
 const FREE_TEXT_PLACEHOLDER = "Type your answer…";
 
 export interface AskQuestionParams {
@@ -44,11 +53,6 @@ export interface QuestionUI {
     placeholder?: string,
     opts?: { signal?: AbortSignal },
   ): Promise<string | undefined>;
-  confirm(
-    title: string,
-    message: string,
-    opts?: { signal?: AbortSignal },
-  ): Promise<boolean>;
 }
 
 /**
@@ -130,7 +134,11 @@ async function askWithOptions(
 
   for (;;) {
     const choice = await ui.select(question, choices, dialogOptions(signal));
-    if (choice === undefined || signal?.aborted) return undefined;
+    // A dismissal in a later round keeps what was already answered: the user is
+    // closing the loop, not taking the answers back.
+    if (choice === undefined || signal?.aborted) {
+      return picked.length > 0 ? picked : undefined;
+    }
 
     let answer = choice;
     if (allowOther && choice === OTHER_OPTION) {
@@ -139,21 +147,24 @@ async function askWithOptions(
         FREE_TEXT_PLACEHOLDER,
         dialogOptions(signal),
       );
-      if (signal?.aborted) return undefined;
+      if (signal?.aborted) return picked.length > 0 ? picked : undefined;
       answer = text?.trim() ?? "";
-      if (!answer) return undefined;
+      if (!answer) return picked.length > 0 ? picked : undefined;
     }
 
     if (!picked.includes(answer)) picked.push(answer);
     if (!multiple) return picked;
 
-    const another = await ui.confirm(
-      "Add another answer?",
-      `Selected: ${picked.join("; ")}`,
+    // The finishing choice comes first, so Enter sends the answers instead of
+    // starting another round: an answer the user already gave must never need a
+    // second dialog they did not expect.
+    const next = await ui.select(
+      MORE_TITLE,
+      [DONE_OPTION, MORE_OPTION],
       dialogOptions(signal),
     );
-    if (signal?.aborted) return undefined;
-    if (!another) return picked;
+    if (signal?.aborted) return picked.length > 0 ? picked : undefined;
+    if (next !== MORE_OPTION) return picked;
   }
 }
 
@@ -204,7 +215,7 @@ export function answerText(result: QuestionAnswer): string {
     return "No interactive UI is available in this session, so the question could not be shown. Ask the user in plain text and stop.";
   }
   if (result.cancelled || !result.answer) {
-    return "The user dismissed the question without answering. Do not assume an answer: ask again, or state the assumption explicitly and continue.";
+    return "The user dismissed the question without answering. Do not ask it again: state the assumption you are making explicitly and continue, or stop and say what you need.";
   }
   return `The user answered:\n\n${result.answer}`;
 }
