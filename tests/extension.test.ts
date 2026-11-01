@@ -61,6 +61,7 @@ function makeHarness(
     choice?: string | null;
     input?: string;
     confirm?: boolean;
+    editor?: string;
     run?: StepRunner;
   } = {},
 ) {
@@ -140,7 +141,7 @@ function makeHarness(
       },
       input: async () => options.input,
       confirm: async () => options.confirm ?? false,
-      editor: async () => undefined,
+      editor: async () => options.editor,
     },
   };
 
@@ -333,6 +334,70 @@ describe("plan extension", () => {
     );
     expect(h.statuses["pi-plan"]).toBeUndefined();
     expect(h.strikethroughCalls()).toBe(0);
+  });
+
+  test("a batch that marked only some steps leaves the rest for the next one", async () => {
+    const child = pending();
+    const h = makeHarness({ run: child.run });
+    await h.emit("session_start", {}, h.ctx);
+    await h.commands.get("plan").handler("", h.ctx);
+    const executing = h.emit(
+      "agent_end",
+      { messages: [{ role: "assistant", content: [{ type: "text", text: planText }] }] },
+      h.ctx,
+    );
+    await flush();
+    expect(child.prompts[0]).toContain("steps 1-2 of 2");
+
+    child.resolve({
+      text: "First step done. [DONE:1]",
+      files: [],
+      stopReason: "stop",
+      usedTools: true,
+    });
+    await flush();
+
+    expect(child.prompts[1]).toContain("step 2 of 2");
+    const last = h.entries.filter((entry) => entry.customType === "pi-plan").at(-1);
+    expect(last.data.steps[0].completed).toBe(true);
+    expect(
+      last.data.steps[1].completed,
+      "a step the subagent did not finish stays open",
+    ).toBe(false);
+    expect(
+      h.sent.some((item) => item.message?.customType === "pi-plan-complete"),
+      "the plan is not closed while a step is open",
+    ).toBe(false);
+
+    child.resolve();
+    await executing;
+  });
+
+  test("refining keeps the plan when the reply does not restate it", async () => {
+    const h = makeHarness({ choice: "Refine the plan", editor: "Make step 2 shorter" });
+    await h.emit("session_start", {}, h.ctx);
+    await h.commands.get("plan").handler("", h.ctx);
+    await h.emit(
+      "agent_end",
+      { messages: [{ role: "assistant", content: [{ type: "text", text: planText }] }] },
+      h.ctx,
+    );
+    expect(
+      h.sent.some((item) => item.user && item.message === "Make step 2 shorter"),
+      "the refinement goes to the model",
+    ).toBe(true);
+
+    // The model answers with a question instead of a new plan.
+    await h.emit(
+      "agent_end",
+      { messages: [{ role: "assistant", content: [{ type: "text", text: "Which step first?" }] }] },
+      h.ctx,
+    );
+    const last = h.entries.filter((entry) => entry.customType === "pi-plan").at(-1);
+    expect(
+      last.data.steps,
+      "the plan the user already had is still there",
+    ).toHaveLength(2);
   });
 
   test("leaves the batch open when the subagent was aborted or did no work", async () => {
@@ -701,6 +766,76 @@ describe("plan extension", () => {
     expect(notes[0]).toContain("Fix the parser in src/planner.ts");
   });
 
+  test("switching to plan mode asks before it aborts a running plan", async () => {
+    const child = pending();
+    const h = makeHarness({ run: child.run });
+    const notes: string[] = [];
+    h.ctx.ui.notify = (text: string) => notes.push(text);
+    await h.emit("session_start", {}, h.ctx);
+    await h.commands.get("plan").handler("", h.ctx);
+    const executing = h.emit(
+      "agent_end",
+      { messages: [{ role: "assistant", content: [{ type: "text", text: planText }] }] },
+      h.ctx,
+    );
+    await flush();
+    expect(h.statuses["pi-plan"]).toContain("0/2");
+
+    // The harness answers the confirm with "no": the run must be untouched.
+    await h.commands.get("plan").handler("", h.ctx);
+    expect(h.statuses["pi-plan"], "a declined switch leaves the run alone").toContain(
+      "0/2",
+    );
+    expect(child.prompts).toHaveLength(1);
+
+    h.ctx.ui.confirm = async () => true;
+    await h.commands.get("plan").handler("", h.ctx);
+    await executing;
+
+    expect(h.statuses["pi-plan"]).toContain("plan");
+    const last = h.entries.filter((entry) => entry.customType === "pi-plan").at(-1);
+    expect(last.data.mode).toBe("plan");
+    expect(notes[notes.length - 1]).toContain("Plan mode enabled");
+  });
+
+  test("/plan off while a plan runs stops it and keeps the steps", async () => {
+    const child = pending();
+    const h = makeHarness({ run: child.run });
+    await h.emit("session_start", {}, h.ctx);
+    await h.commands.get("plan").handler("", h.ctx);
+    const executing = h.emit(
+      "agent_end",
+      { messages: [{ role: "assistant", content: [{ type: "text", text: planText }] }] },
+      h.ctx,
+    );
+    await flush();
+
+    await h.commands.get("plan").handler("off", h.ctx);
+    await executing;
+
+    expect(h.statuses["pi-plan"]).toBeUndefined();
+    const last = h.entries.filter((entry) => entry.customType === "pi-plan").at(-1);
+    expect(last.data.steps).toHaveLength(2);
+    expect(last.data.steps.every((step: any) => !step.completed)).toBe(true);
+    expect(h.activeTools()).toContain("edit");
+  });
+
+  test("the plan dialog offers the safe answer first", async () => {
+    const h = makeHarness({ choice: "Stay in plan mode" });
+    await h.emit("session_start", {}, h.ctx);
+    await h.commands.get("plan").handler("", h.ctx);
+    await h.emit(
+      "agent_end",
+      { messages: [{ role: "assistant", content: [{ type: "text", text: planText }] }] },
+      h.ctx,
+    );
+
+    const dialog = h.selectCalls.find((call: any) =>
+      call.title.includes("what next"),
+    );
+    expect(dialog?.options[0]).toBe("Stay in plan mode");
+  });
+
   test("/plan:retry runs the open step again from normal", async () => {
     const results: StepResult[] = [
       { text: "", files: [], stopReason: "aborted", usedTools: true },
@@ -958,6 +1093,8 @@ describe("plan extension", () => {
     await flush();
 
     expect(abortSignal?.aborted).toBe(false);
+    // Switching to plan mode is a confirmed action: it clears the plan too.
+    h.ctx.ui.confirm = async () => true;
     await h.commands.get("plan").handler("", h.ctx);
     expect(abortSignal?.aborted).toBe(true);
     await executing;

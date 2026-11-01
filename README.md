@@ -89,8 +89,9 @@ it. The footer shows `ask` while the mode is on.
 ### Plan
 
 Explore, then write a numbered list under a `Plan:` header. pi turns it into a
-checklist and asks what to do: **Execute the plan**, **Stay in plan mode** or
-**Refine the plan**.
+checklist and asks what to do: **Stay in plan mode**, **Execute the plan** or
+**Refine the plan**. The safe answer comes first, so a plain Enter never starts
+the execution by accident.
 
 When the plan needs a decision, the agent calls `ask_question` instead of ending
 its turn with a question in prose: a selector with short options and a free-text

@@ -364,7 +364,7 @@ needs a decision you cannot take, stop and say what you need.`;
 
       for (const file of result.files) filesTouched.add(file);
 
-      const marked = markCompletedSteps(result.text, steps);
+      const marked = markCompletedSteps(result.text, batchSteps);
       const cut =
         result.stopReason === "aborted" ||
         result.stopReason === "error" ||
@@ -391,15 +391,12 @@ needs a decision you cannot take, stop and say what you need.`;
       }
 
       // Models often finish a batch without emitting [DONE:n] markers. Treat a
-      // successful run as completing the batch instead of leaving it stuck.
+      // successful run as completing the batch instead of leaving it stuck; a run
+      // that marked only some steps leaves the rest for the next batch.
       if (marked === 0) {
-        for (const step of batchSteps) {
-          const item = steps.find((s) => s.step === step.step);
-          if (item) item.completed = true;
-        }
+        for (const step of batchSteps) step.completed = true;
       }
 
-      for (const step of batchSteps) step.completed = true;
       updateUI(ctx);
       persistState();
     }
@@ -442,14 +439,33 @@ needs a decision you cannot take, stop and say what you need.`;
     updateUI(ctx);
   }
 
-  function setPlanMode(ctx: ExtensionContext, on: boolean): void {
+  async function setPlanMode(ctx: ExtensionContext, on: boolean): Promise<void> {
     if (on) {
       if (modes.is("plan")) {
         ctx.ui.notify("Plan mode is already on.", "info");
         return;
       }
+      // Entering plan mode aborts the batch in flight and clears the steps, so a
+      // running execution is not thrown away on a keystroke.
+      if (modes.is("execute")) {
+        const leave = ctx.hasUI
+          ? await ctx.ui.confirm(
+              "Leave the execution?",
+              "Switching to plan mode aborts the batch in flight and clears the plan.",
+            )
+          : false;
+        if (!leave) return;
+      }
       modes.enter("plan", ctx);
       ctx.ui.notify(`Plan mode enabled. Tools: ${PLAN_MODE_TOOLS.join(", ")}`);
+    } else if (modes.is("execute")) {
+      // `/plan off` while a plan runs is `/plan:stop`: the work in flight stops
+      // and the steps stay for `/plan:retry`. Leaving plan mode never means
+      // "do nothing" and saying so.
+      running?.abort();
+      skipped = undefined;
+      modes.leave(ctx);
+      ctx.ui.notify("Plan execution stopped. Full access restored.");
     } else {
       if (!modes.is("plan")) {
         ctx.ui.notify("Plan mode is off.", "info");
@@ -462,10 +478,10 @@ needs a decision you cannot take, stop and say what you need.`;
     updateUI(ctx);
   }
 
-  function togglePlanMode(ctx: ExtensionContext): void {
+  async function togglePlanMode(ctx: ExtensionContext): Promise<void> {
     // Turning on plan mode (from normal or execute); off never resets a step
     // list, that is what `resetExecution` is for.
-    setPlanMode(ctx, !modes.is("plan"));
+    await setPlanMode(ctx, !modes.is("plan"));
   }
 
   // --- Transcript renderers ---
@@ -618,7 +634,7 @@ needs a decision you cannot take, stop and say what you need.`;
         ctx.ui.notify(`Plan mode is ${mode}.${progress}`, "info");
         return;
       }
-      togglePlanMode(ctx);
+      return togglePlanMode(ctx);
     },
   });
 
@@ -866,9 +882,11 @@ needs a decision you cannot take, stop and say what you need.`;
       { triggerTurn: false }
     );
 
+    // The safe answer is the default: a plain Enter must not start executing a
+    // plan the user has not read yet.
     const choice = await ctx.ui.select("Plan mode — what next?", [
-      "Execute the plan",
       "Stay in plan mode",
+      "Execute the plan",
       "Refine the plan",
     ]);
 
@@ -892,12 +910,9 @@ needs a decision you cannot take, stop and say what you need.`;
     } else if (choice === "Refine the plan") {
       const refinement = await ctx.ui.editor("Refine the plan:", "");
       if (refinement?.trim()) {
-        // The refinement may replace the plan or ask a question of its own.
-        // Clearing the steps keeps `agent_end` from offering the old plan
-        // again before the model has replied.
-        steps = [];
-        persistState();
-        updateUI(ctx);
+        // The steps stay: a refinement that asks a question instead of restating
+        // the plan must not wipe what the user already had. A reply that does
+        // restate it replaces the list and carries the ticks over.
         pi.sendUserMessage(refinement.trim());
       }
     }
