@@ -81,7 +81,11 @@ function makeHarness(
       const list = handlers.get(event) ?? [];
       list.push(handler);
       handlers.set(event, list);
-      return () => {};
+      return () => {
+        const live = handlers.get(event) ?? [];
+        const index = live.indexOf(handler);
+        if (index !== -1) live.splice(index, 1);
+      };
     },
     registerFlag() {},
     registerCommand(name: string, command: any) {
@@ -626,6 +630,28 @@ describe("plan extension", () => {
     child.resolve();
     await executing;
     expect(h.statuses["pi-plan"]).toBeUndefined();
+  });
+
+  test("the turn_end listener lives only while a plan runs", async () => {
+    const child = pending();
+    const h = makeHarness({ run: child.run });
+    await h.emit("session_start", {}, h.ctx);
+    expect(h.handlers.get("turn_end") ?? []).toHaveLength(0);
+
+    await h.commands.get("plan").handler("", h.ctx);
+    expect(h.handlers.get("turn_end") ?? []).toHaveLength(0);
+
+    const executing = h.emit(
+      "agent_end",
+      { messages: [{ role: "assistant", content: [{ type: "text", text: planText }] }] },
+      h.ctx,
+    );
+    await flush();
+    expect(h.handlers.get("turn_end") ?? []).toHaveLength(1);
+
+    await h.commands.get("plan:stop").handler("", h.ctx);
+    await executing;
+    expect(h.handlers.get("turn_end") ?? []).toHaveLength(0);
   });
 
   test("stopping while a batch is in flight leaves every step open", async () => {

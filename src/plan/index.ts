@@ -773,9 +773,17 @@ needs a decision you cannot take, stop and say what you need.`;
 
   // --- Track progress from agent markers ---
 
-  pi.on("turn_end", async (event, ctx) => {
+  // The listener exists only while a plan runs. pi resolves every turn's assistant
+  // message against the session before it dispatches `turn_end`, and a turn started
+  // by `/ask <question>` has no entry of its own, so a handler registered for the
+  // whole run fails there with "turn_end could not resolve the persisted assistant
+  // entry ID" even though the mode is not plan.
+  const trackSteps = async (
+    event: { message?: unknown },
+    ctx: ExtensionContext,
+  ) => {
     if (!modes.is("execute") || steps.length === 0) return;
-    const message = (event as { message?: unknown }).message as
+    const message = event.message as
       | { role?: string; content?: unknown }
       | undefined;
     if (!message || message.role !== "assistant") return;
@@ -795,6 +803,16 @@ needs a decision you cannot take, stop and say what you need.`;
     if (markCompletedSteps(text, steps) > 0) {
       updateUI(ctx);
       persistState();
+    }
+  };
+
+  let turnEndOff: (() => void) | undefined;
+  modes.onChange((to) => {
+    if (to === "execute" && !turnEndOff) {
+      turnEndOff = pi.on("turn_end", trackSteps);
+    } else if (to !== "execute" && turnEndOff) {
+      turnEndOff();
+      turnEndOff = undefined;
     }
   });
 
