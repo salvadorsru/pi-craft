@@ -1138,4 +1138,42 @@ describe("plan extension", () => {
     await executing;
     expect(h.statuses["pi-plan"]).toBeUndefined();
   });
+
+  test("only the batch in flight keeps its instruction in context", async () => {
+    // Undo and notifications flush every queued instruction at once: the plan
+    // then looks stuck, because the model reads batches whose steps are done.
+    const child = pending();
+    const h = makeHarness({ run: child.run });
+    const context = async (messages: any[]) => {
+      for (const handler of h.handlers.get("context") ?? []) {
+        const result = await handler({ messages }, h.ctx);
+        if (result?.messages) messages = result.messages;
+      }
+      return messages;
+    };
+    const instruction = (content: string) => ({
+      role: "custom",
+      customType: "pi-plan-execute",
+      content,
+    });
+    await h.emit("session_start", {}, h.ctx);
+    await h.commands.get("plan").handler("", h.ctx);
+
+    const stale = instruction("old batch");
+    expect(await context([stale])).toEqual([]);
+
+    const executing = h.emit(
+      "agent_end",
+      { messages: [{ role: "assistant", content: [{ type: "text", text: planText }] }] },
+      h.ctx,
+    );
+    await flush();
+
+    const live = instruction("live batch");
+    const user = { role: "user", content: "hello" };
+    expect(await context([stale, user, live])).toEqual([user, live]);
+
+    child.resolve();
+    await executing;
+  });
 });

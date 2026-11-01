@@ -918,6 +918,29 @@ needs a decision you cannot take, stop and say what you need.`;
     }
   });
 
+  // --- Context hygiene ---
+
+  // One batch instruction is sent per batch, and they stay in the transcript. A
+  // long plan leaves a stack of them, so the next parent turn — an undo, a
+  // notification, a user prompt — reads several stale "work on steps 1-3" texts
+  // whose steps are already done. Only the batch in flight is kept.
+  pi.on("context", async (event) => {
+    const isInstruction = (message: unknown) =>
+      (message as { customType?: string } | null)?.customType === "pi-plan-execute";
+
+    let live = -1;
+    if (modes.is("execute")) {
+      event.messages.forEach((message, index) => {
+        if (isInstruction(message)) live = index;
+      });
+    }
+
+    const kept = event.messages.filter(
+      (message, index) => !isInstruction(message) || index === live,
+    );
+    return kept.length === event.messages.length ? undefined : { messages: kept };
+  });
+
   // --- Restore state on session start/resume ---
 
   pi.on("session_start", async (_event, ctx) => {
